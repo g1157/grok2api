@@ -1545,12 +1545,6 @@ adminRoutes.post("/api/cache/clear/videos", requireAdminAuth, async (c) => {
 
 // ============== Imagine Standalone Routes ==============
 
-adminRoutes.get("/admin/imagine", async (c) => {
-  const asset = await c.env.ASSETS.fetch(new Request("https://dummy/static/imagine/imagine.html"));
-  if (!asset.ok) return c.text("Imagine page not found", 404);
-  return new Response(asset.body, { headers: { "content-type": "text/html; charset=utf-8" } });
-});
-
 adminRoutes.post("/api/v1/imagine/generate", requireAdminAuth, async (c) => {
   try {
     const body = (await c.req.json()) as {

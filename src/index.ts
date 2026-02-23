@@ -143,6 +143,13 @@ app.get("/admin/cache", (c) => {
   return fetchAsset(c, "/cache/cache.html");
 });
 
+app.get("/admin/imagine", (c) => {
+  const buildSha = getBuildSha(c.env as Env);
+  const v = c.req.query("v") ?? "";
+  if (v !== buildSha) return c.redirect(`/admin/imagine?v=${encodeURIComponent(buildSha)}`, 302);
+  return fetchAsset(c, "/imagine/imagine.html");
+});
+
 app.get("/admin/keys", (c) => {
   const buildSha = getBuildSha(c.env as Env);
   const v = c.req.query("v") ?? "";

@@ -877,6 +877,11 @@ async def admin_cache_page():
     """缓存管理页"""
     return await render_template("cache/cache.html")
 
+@router.get("/admin/imagine", response_class=HTMLResponse, include_in_schema=False)
+async def admin_imagine_page():
+    """Imagine 生图页"""
+    return await render_template("imagine/imagine.html")
+
 @router.get("/api/v1/admin/cache", dependencies=[Depends(verify_api_key)])
 async def get_cache_stats_api(request: Request):
     """获取缓存统计"""

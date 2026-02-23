@@ -57,3 +57,11 @@ auto_start_solver = true
 solver_debug = false
 max_errors = 0
 max_runtime_minutes = 0
+
+[imagine]
+enabled = true
+sso_rotation_strategy = "hybrid"
+sso_daily_limit = 10
+default_image_count = 4
+default_aspect_ratio = "2:3"
+generation_timeout = 120

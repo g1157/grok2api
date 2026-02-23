@@ -35,6 +35,13 @@ import {
   updateTokenLimits,
 } from "../repo/tokens";
 import { generateImagineWs, resolveAspectRatio } from "../grok/imagineExperimental";
+import {
+  generateImagineWithAutoToken,
+  listImagineGallery,
+  clearImagineGallery,
+  deleteImagineImage,
+  sizeToAspectRatio,
+} from "../services/imagineStandalone";
 import { checkRateLimits } from "../grok/rateLimits";
 import { addRequestLog, clearRequestLogs, getRequestLogs, getRequestStats } from "../repo/logs";
 import { getRefreshProgress, setRefreshProgress } from "../repo/refreshProgress";
@@ -1533,6 +1540,129 @@ adminRoutes.post("/api/cache/clear/videos", requireAdminAuth, async (c) => {
     return c.json({ success: true, message: `视频缓存清理完成，已删除 ${deleted} 个文件`, data: { deleted_count: deleted, type: "videos" } });
   } catch (e) {
     return c.json(jsonError(`清理失败: ${e instanceof Error ? e.message : String(e)}`, "VIDEO_CACHE_CLEAR_ERROR"), 500);
+  }
+});
+
+// ============== Imagine Standalone Routes ==============
+
+adminRoutes.get("/admin/imagine", async (c) => {
+  const asset = await c.env.ASSETS.fetch(new Request("https://dummy/static/imagine/imagine.html"));
+  if (!asset.ok) return c.text("Imagine page not found", 404);
+  return new Response(asset.body, { headers: { "content-type": "text/html; charset=utf-8" } });
+});
+
+adminRoutes.post("/api/v1/imagine/generate", requireAdminAuth, async (c) => {
+  try {
+    const body = (await c.req.json()) as {
+      prompt?: string;
+      size?: string;
+      aspect_ratio?: string;
+      n?: number;
+      stream?: boolean;
+    };
+    const prompt = String(body?.prompt ?? "").trim();
+    if (!prompt) return c.json({ error: "Prompt is required" }, 400);
+
+    const n = Math.max(1, Math.min(6, Number(body?.n ?? 4)));
+    const aspectRatio = body?.aspect_ratio ?? sizeToAspectRatio(body?.size ?? "1024x1024");
+    const stream = Boolean(body?.stream);
+
+    if (!stream) {
+      const result = await generateImagineWithAutoToken(c.env, prompt, aspectRatio, n);
+      if (!result.success) {
+        return c.json({ error: result.error, code: result.errorCode }, 500);
+      }
+      return c.json({
+        created: Math.floor(Date.now() / 1000),
+        data: (result.urls ?? []).map((url) => ({ url })),
+      });
+    }
+
+    // SSE streaming mode
+    const encoder = new TextEncoder();
+    const { readable, writable } = new TransformStream();
+    const writer = writable.getWriter();
+
+    const sendEvent = async (event: string, data: unknown) => {
+      const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+      try { await writer.write(encoder.encode(payload)); } catch { /* closed */ }
+    };
+
+    c.executionCtx.waitUntil((async () => {
+      try {
+        const result = await generateImagineWithAutoToken(c.env, prompt, aspectRatio, n, (p) => {
+          void sendEvent("progress", {
+            image_id: p.imageId,
+            stage: p.stage,
+            completed: p.isFinal ? 1 : 0,
+            total: n,
+          });
+        });
+
+        if (result.success) {
+          await sendEvent("complete", {
+            created: Math.floor(Date.now() / 1000),
+            data: (result.urls ?? []).map((url) => ({ url })),
+          });
+        } else {
+          await sendEvent("error", { error: result.error ?? "Unknown error" });
+        }
+      } catch (e) {
+        await sendEvent("error", { error: e instanceof Error ? e.message : String(e) });
+      } finally {
+        try { await writer.close(); } catch { /* ignore */ }
+      }
+    })());
+
+    return new Response(readable, {
+      headers: {
+        "content-type": "text/event-stream; charset=utf-8",
+        "cache-control": "no-cache",
+        connection: "keep-alive",
+      },
+    });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
+  }
+});
+
+adminRoutes.get("/api/v1/imagine/status", requireAdminAuth, async (c) => {
+  return c.json({ status: "ready" });
+});
+
+adminRoutes.post("/api/v1/imagine/sso/reload", requireAdminAuth, async (c) => {
+  return c.json({ success: true, message: "SSO tokens reloaded from DB" });
+});
+
+adminRoutes.post("/api/v1/imagine/sso/reset", requireAdminAuth, async (c) => {
+  return c.json({ success: true, message: "SSO state reset" });
+});
+
+adminRoutes.get("/api/v1/imagine/gallery", requireAdminAuth, async (c) => {
+  try {
+    const items = await listImagineGallery(c.env);
+    return c.json({ success: true, data: items, total: items.length });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
+  }
+});
+
+adminRoutes.post("/api/v1/imagine/gallery/clear", requireAdminAuth, async (c) => {
+  try {
+    const deleted = await clearImagineGallery(c.env);
+    return c.json({ success: true, deleted });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
+  }
+});
+
+adminRoutes.delete("/api/v1/imagine/gallery/:filename", requireAdminAuth, async (c) => {
+  try {
+    const filename = c.req.param("filename");
+    const ok = await deleteImagineImage(c.env, filename);
+    return c.json(ok ? { success: true } : { success: false, error: "Not found" }, ok ? 200 : 404);
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
   }
 });
 

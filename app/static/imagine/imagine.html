@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Grok Imagine - Image Generation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/static/imagine/imagine.css">
+</head>
+<body class="bg-[var(--bg)] text-[var(--fg)] min-h-screen">
+    <div id="nav-placeholder"></div>
+
+    <main class="max-w-6xl mx-auto px-4 py-8 space-y-8">
+        <!-- Generation Form -->
+        <section class="card">
+            <h2 class="text-xl font-semibold mb-4">Image Generation</h2>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium mb-1">Prompt</label>
+                    <textarea id="prompt" rows="3" class="input-field w-full" placeholder="Describe the image you want to generate..."></textarea>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium mb-1">Aspect Ratio</label>
+                        <select id="aspect-ratio" class="input-field w-full">
+                            <option value="1:1">1:1 (Square)</option>
+                            <option value="2:3">2:3 (Portrait)</option>
+                            <option value="3:2">3:2 (Landscape)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-1">Count</label>
+                        <select id="count" class="input-field w-full">
+                            <option value="1">1</option>
+                            <option value="2">2</option>
+                            <option value="3">3</option>
+                            <option value="4">4</option>
+                        </select>
+                    </div>
+                    <div class="flex items-end">
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" id="stream" checked class="w-4 h-4 accent-[var(--success)]">
+                            <span class="text-sm font-medium">Stream Progress</span>
+                        </label>
+                    </div>
+                </div>
+                <button id="btn-generate" onclick="generateImages()" class="btn-primary w-full sm:w-auto">Generate</button>
+            </div>
+        </section>
+
+        <!-- Progress Panel -->
+        <section id="progress-panel" class="card hidden">
+            <h2 class="text-xl font-semibold mb-4">Generation Progress</h2>
+            <div class="space-y-3">
+                <div class="flex items-center gap-3">
+                    <span id="progress-stage" class="text-sm font-medium text-[var(--accents-5)]">Initializing...</span>
+                </div>
+                <div class="progress-bar-track">
+                    <div id="progress-bar" class="progress-bar-fill" style="width: 0%"></div>
+                </div>
+                <p id="progress-status" class="text-xs text-[var(--accents-4)]"></p>
+            </div>
+        </section>
+
+        <!-- Image Gallery -->
+        <section class="card">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-semibold">Gallery</h2>
+                <button onclick="clearGallery()" class="btn-danger text-sm">Clear All</button>
+            </div>
+            <div id="gallery" class="gallery-grid">
+                <p class="text-[var(--accents-4)] col-span-full text-center py-8">No images yet</p>
+            </div>
+        </section>
+
+        <!-- SSO Status -->
+        <section class="card">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-semibold">SSO Token Status</h2>
+                <div class="flex gap-2">
+                    <button onclick="reloadSso()" class="btn-secondary text-sm">Reload SSO</button>
+                    <button onclick="resetDailyUsage()" class="btn-secondary text-sm">Reset Daily Usage</button>
+                </div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="sso-table w-full">
+                    <thead>
+                        <tr>
+                            <th>Key Prefix</th>
+                            <th>Used Today</th>
+                            <th>Remaining</th>
+                            <th>Failed</th>
+                            <th>Last Used</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sso-tbody">
+                        <tr><td colspan="5" class="text-center text-[var(--accents-4)] py-4">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <script src="/static/imagine/imagine.js"></script>
+</body>
+</html>

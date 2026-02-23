@@ -182,6 +182,12 @@ def create_app() -> FastAPI:
 
     app.include_router(admin_router)
 
+    # 注册 Imagine 独立模块路由
+    if get_config("imagine.enabled", True):
+        from app.api.v1.imagine_standalone import router as imagine_router_standalone
+
+        app.include_router(imagine_router_standalone)
+
     return app
 
 

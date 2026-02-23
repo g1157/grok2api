@@ -1621,7 +1621,33 @@ adminRoutes.post("/api/v1/imagine/generate", requireAdminAuth, async (c) => {
 });
 
 adminRoutes.get("/api/v1/imagine/status", requireAdminAuth, async (c) => {
-  return c.json({ status: "ready" });
+  const now = Date.now();
+  const rows = await listTokens(c.env.DB);
+  const tokens = rows
+    .filter((r) => r.status !== "expired")
+    .map((r) => {
+      const cooldownActive = r.cooldown_until && r.cooldown_until > now;
+      const available = !cooldownActive && r.remaining_queries !== 0 && r.failed_count < 3;
+      const masked = r.token.length > 12
+        ? r.token.slice(0, 8) + "..." + r.token.slice(-4)
+        : "***";
+      return {
+        token: masked,
+        daily_count: r.remaining_queries === -1 ? 0 : Math.max(0, 50 - r.remaining_queries),
+        daily_limit: 50,
+        fail_count: r.failed_count,
+        age_verified: true,
+        available,
+      };
+    });
+  return c.json({
+    status: "ready",
+    sso_pool: {
+      total: tokens.length,
+      available: tokens.filter((t) => t.available).length,
+      tokens,
+    },
+  });
 });
 
 adminRoutes.post("/api/v1/imagine/sso/reload", requireAdminAuth, async (c) => {

@@ -1577,8 +1577,8 @@ adminRoutes.post("/api/v1/imagine/generate", requireAdminAuth, async (c) => {
     const { readable, writable } = new TransformStream();
     const writer = writable.getWriter();
 
-    const sendEvent = async (event: string, data: unknown) => {
-      const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    const sendEvent = async (event: string, data: Record<string, unknown>) => {
+      const payload = `data: ${JSON.stringify({ event, ...data })}\n\n`;
       try { await writer.write(encoder.encode(payload)); } catch { /* closed */ }
     };
 
@@ -1599,11 +1599,12 @@ adminRoutes.post("/api/v1/imagine/generate", requireAdminAuth, async (c) => {
             data: (result.urls ?? []).map((url) => ({ url })),
           });
         } else {
-          await sendEvent("error", { error: result.error ?? "Unknown error" });
+          await sendEvent("error", { message: result.error ?? "Unknown error" });
         }
       } catch (e) {
-        await sendEvent("error", { error: e instanceof Error ? e.message : String(e) });
+        await sendEvent("error", { message: e instanceof Error ? e.message : String(e) });
       } finally {
+        try { await writer.write(encoder.encode("data: [DONE]\n\n")); } catch { /* ignore */ }
         try { await writer.close(); } catch { /* ignore */ }
       }
     })());

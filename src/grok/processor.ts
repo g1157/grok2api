@@ -174,35 +174,10 @@ export function createOpenAiStreamFromGrokNdjson(
       let thinkingFinished = false;
       let videoProgressStarted = false;
       let lastVideoProgress = -1;
-      let pendingVideo:
-        | {
-            src: string;
-            poster?: string;
-            progress: number;
-          }
-        | null = null;
-      let videoHtmlEmitted = false;
 
       let buffer = "";
 
       const flushStop = () => {
-        if (!videoHtmlEmitted && pendingVideo?.src) {
-          controller.enqueue(
-            encoder.encode(
-              makeChunk(
-                id,
-                created,
-                currentModel,
-                buildVideoHtml({
-                  videoUrl: pendingVideo.src,
-                  posterPreview: settings.video_poster_preview === true,
-                  ...(pendingVideo.poster ? { posterUrl: pendingVideo.poster } : {}),
-                }),
-              ),
-            ),
-          );
-          videoHtmlEmitted = true;
-        }
         controller.enqueue(encoder.encode(makeChunk(id, created, currentModel, "", "stop")));
         controller.enqueue(encoder.encode(makeDone()));
       };
@@ -317,25 +292,20 @@ export function createOpenAiStreamFromGrokNdjson(
                   poster = toImgProxyUrl(global, origin, thumbPath);
                 }
 
-                pendingVideo = { src, progress, ...(poster ? { poster } : {}) };
-                // Emit one finalized video URL only; intermediate URLs may be unplayable.
-                if (!videoHtmlEmitted && progress >= 100) {
-                  controller.enqueue(
-                    encoder.encode(
-                      makeChunk(
-                        id,
-                        created,
-                        currentModel,
-                        buildVideoHtml({
-                          videoUrl: src,
-                          posterPreview: settings.video_poster_preview === true,
-                          ...(poster ? { posterUrl: poster } : {}),
-                        }),
-                      ),
+                controller.enqueue(
+                  encoder.encode(
+                    makeChunk(
+                      id,
+                      created,
+                      currentModel,
+                      buildVideoHtml({
+                        videoUrl: src,
+                        posterPreview: settings.video_poster_preview === true,
+                        ...(poster ? { posterUrl: poster } : {}),
+                      }),
                     ),
-                  );
-                  videoHtmlEmitted = true;
-                }
+                  ),
+                );
               }
               continue;
             }
@@ -454,13 +424,7 @@ export async function parseOpenAiFromGrokNdjson(
 
   let content = "";
   let model = requestedModel;
-  let bestVideo:
-    | {
-        src: string;
-        poster?: string;
-        progress: number;
-      }
-    | null = null;
+  let sawFailedToRespond = false;
   for (const line of lines) {
     let data: GrokNdjson;
     try {
@@ -470,7 +434,14 @@ export async function parseOpenAiFromGrokNdjson(
     }
 
     const err = (data as any).error;
-    if (err?.message) throw new Error(String(err.message));
+    if (err?.message) {
+      const errMsg = String(err.message);
+      if (isVideoRequested && isFailedToRespondMessage(errMsg)) {
+        sawFailedToRespond = true;
+        continue;
+      }
+      throw new Error(errMsg);
+    }
 
     const grok = (data as any).result?.response;
     if (!grok) continue;
@@ -479,7 +450,6 @@ export async function parseOpenAiFromGrokNdjson(
     if (videoResp?.videoUrl && typeof videoResp.videoUrl === "string") {
       const videoPath = encodeAssetPath(videoResp.videoUrl);
       const src = toImgProxyUrl(global, origin, videoPath);
-      const progress = typeof videoResp.progress === "number" ? videoResp.progress : -1;
 
       let poster: string | undefined;
       if (typeof videoResp.thumbnailImageUrl === "string" && videoResp.thumbnailImageUrl) {
@@ -487,23 +457,31 @@ export async function parseOpenAiFromGrokNdjson(
         poster = toImgProxyUrl(global, origin, thumbPath);
       }
 
-      if (!bestVideo || progress >= bestVideo.progress) {
-        bestVideo = { src, progress, ...(poster ? { poster } : {}) };
-      }
+      content = buildVideoHtml({
+        videoUrl: src,
+        posterPreview: settings.video_poster_preview === true,
+        ...(poster ? { posterUrl: poster } : {}),
+      });
       model = requestedModel;
-      continue;
+      break;
     }
 
     const modelResp = grok.modelResponse;
     if (!modelResp) continue;
-    if (typeof modelResp.error === "string" && modelResp.error) throw new Error(modelResp.error);
+    if (typeof modelResp.error === "string" && modelResp.error) {
+      const modelErr = String(modelResp.error);
+      if (isVideoRequested && isFailedToRespondMessage(modelErr)) {
+        sawFailedToRespond = true;
+        continue;
+      }
+      throw new Error(modelErr);
+    }
 
     if (typeof modelResp.model === "string" && modelResp.model) model = modelResp.model;
     if (typeof modelResp.message === "string") {
       const message = String(modelResp.message);
-      if (!(isVideoRequested && isFailedToRespondMessage(message))) {
-        content = message;
-      }
+      if (isVideoRequested && isFailedToRespondMessage(message)) sawFailedToRespond = true;
+      else content = message;
     }
 
     const rawUrls = modelResp.generatedImageUrls;
@@ -526,16 +504,9 @@ export async function parseOpenAiFromGrokNdjson(
     if (!isVideoRequested) break;
   }
 
-  if (bestVideo?.src) {
-    content = buildVideoHtml({
-      videoUrl: bestVideo.src,
-      posterPreview: settings.video_poster_preview === true,
-      ...(bestVideo.poster ? { posterUrl: bestVideo.poster } : {}),
-    });
-    model = requestedModel;
-  } else if (isVideoRequested && isFailedToRespondMessage(content)) {
+  if (isVideoRequested && !content && sawFailedToRespond) {
     // Promote transient upstream text error to retryable exception in route layer.
-    throw new Error(content || "Failed to respond.");
+    throw new Error("Failed to respond.");
   }
 
   return {

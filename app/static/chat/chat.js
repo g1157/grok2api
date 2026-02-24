@@ -999,6 +999,108 @@ function extractImagineImageUrls(payload) {
     .filter(Boolean);
 }
 
+function renderImagineTabGalleryCards(items) {
+  const gallery = q('imagine-tab-gallery');
+  if (!gallery) return;
+  if (!Array.isArray(items) || !items.length) {
+    gallery.innerHTML = '<div class="workflow-empty">暂无图片</div>';
+    updateImagineTabStats(null, 0);
+    return;
+  }
+  gallery.innerHTML = items
+    .map((img) => {
+      const name = String(img?.name || img?.filename || '').trim();
+      const rawUrl = normalizeImagineGalleryUrl(img?.url, name);
+      const src = toAbsoluteUrl(rawUrl);
+      const encodedSrc = encodeURIComponent(src);
+      const encodedName = encodeURIComponent(name);
+      const active = workflowState.selectedImage && toAbsoluteUrl(workflowState.selectedImage) === src;
+      return `
+        <div class="imagine-tab-card${active ? ' is-active' : ''}">
+          <img alt="imagine-image" src="${escapeHtml(src)}" onclick="openImaginePreview(decodeURIComponent('${encodedSrc}'))" />
+          <div class="imagine-tab-actions">
+            <button type="button" onclick="syncImagineTabImage(decodeURIComponent('${encodedSrc}'))">选中工作图</button>
+            <button type="button" onclick="goImagineTabEdit(decodeURIComponent('${encodedSrc}'))">去编辑</button>
+            <button type="button" onclick="goImagineTabVideo(decodeURIComponent('${encodedSrc}'))">去视频</button>
+            <button type="button" onclick="deleteImagineTabImage(decodeURIComponent('${encodedName}'))">删除</button>
+          </div>
+        </div>
+      `;
+    })
+    .join('');
+  gallery.querySelectorAll('img').forEach((img) => bindRetryableImage(img));
+  updateImagineTabStats(null, items.length);
+}
+
+function prependImagineTabGeneratedCards(urls) {
+  const gallery = q('imagine-tab-gallery');
+  if (!gallery || !Array.isArray(urls) || !urls.length) return;
+
+  if (gallery.querySelector('.workflow-empty')) {
+    gallery.innerHTML = '';
+  }
+
+  const existingSet = new Set(
+    Array.from(gallery.querySelectorAll('.imagine-tab-card img'))
+      .map((img) => toAbsoluteUrl(String(img.getAttribute('src') || '').trim()))
+      .filter(Boolean),
+  );
+
+  let added = 0;
+  urls
+    .map((raw) => toAbsoluteUrl(raw))
+    .filter(Boolean)
+    .reverse()
+    .forEach((src) => {
+      if (existingSet.has(src)) return;
+      existingSet.add(src);
+      const encodedSrc = encodeURIComponent(src);
+      const card = document.createElement('div');
+      card.className = 'imagine-tab-card';
+      card.innerHTML = `
+        <img alt="imagine-image" src="${escapeHtml(src)}" onclick="openImaginePreview(decodeURIComponent('${encodedSrc}'))" />
+        <div class="imagine-tab-actions">
+          <button type="button" onclick="syncImagineTabImage(decodeURIComponent('${encodedSrc}'))">选中工作图</button>
+          <button type="button" onclick="goImagineTabEdit(decodeURIComponent('${encodedSrc}'))">去编辑</button>
+          <button type="button" onclick="goImagineTabVideo(decodeURIComponent('${encodedSrc}'))">去视频</button>
+        </div>
+      `;
+      const imgEl = card.querySelector('img');
+      if (imgEl) bindRetryableImage(imgEl);
+      gallery.prepend(card);
+      added += 1;
+    });
+
+  if (added > 0) {
+    updateImagineTabStats(null, gallery.querySelectorAll('.imagine-tab-card').length);
+  }
+}
+
+async function refreshImagineTabGalleryWithRetry(expectedUrls) {
+  const expected = Array.isArray(expectedUrls)
+    ? expectedUrls.map((raw) => toAbsoluteUrl(raw)).filter(Boolean)
+    : [];
+
+  const maxAttempts = expected.length ? 5 : 1;
+  for (let i = 0; i < maxAttempts; i += 1) {
+    const items = await loadImagineTabGallery(true);
+    if (!expected.length) return;
+    const fetched = new Set(
+      items
+        .map((img) => {
+          const name = String(img?.name || img?.filename || '').trim();
+          return toAbsoluteUrl(normalizeImagineGalleryUrl(img?.url, name));
+        })
+        .filter(Boolean),
+    );
+    const allReady = expected.every((u) => fetched.has(u));
+    if (allReady) return;
+    if (i < maxAttempts - 1) {
+      await new Promise((resolve) => setTimeout(resolve, 320 * (i + 1)));
+    }
+  }
+}
+
 async function loadImagineTabSsoStatus(silent = true) {
   const tbody = q('imagine-tab-sso-body');
   try {
@@ -1054,36 +1156,7 @@ async function loadImagineTabGallery(silent = true) {
     if (!res.ok) throw new Error(extractApiErrorMessage(payload, res.status));
 
     const items = Array.isArray(payload?.data) ? payload.data : (Array.isArray(payload?.images) ? payload.images : []);
-    const gallery = q('imagine-tab-gallery');
-    if (gallery) {
-      if (!items.length) {
-        gallery.innerHTML = '<div class="workflow-empty">暂无图片</div>';
-      } else {
-        gallery.innerHTML = items
-          .map((img) => {
-            const name = String(img?.name || img?.filename || '').trim();
-            const rawUrl = normalizeImagineGalleryUrl(img?.url, name);
-            const src = toAbsoluteUrl(rawUrl);
-            const encodedSrc = encodeURIComponent(src);
-            const encodedName = encodeURIComponent(name);
-            const active = workflowState.selectedImage && toAbsoluteUrl(workflowState.selectedImage) === src;
-            return `
-              <div class="imagine-tab-card${active ? ' is-active' : ''}">
-                <img alt="imagine-image" src="${escapeHtml(src)}" onclick="openImaginePreview(decodeURIComponent('${encodedSrc}'))" />
-                <div class="imagine-tab-actions">
-                  <button type="button" onclick="syncImagineTabImage(decodeURIComponent('${encodedSrc}'))">选中工作图</button>
-                  <button type="button" onclick="goImagineTabEdit(decodeURIComponent('${encodedSrc}'))">去编辑</button>
-                  <button type="button" onclick="goImagineTabVideo(decodeURIComponent('${encodedSrc}'))">去视频</button>
-                  <button type="button" onclick="deleteImagineTabImage(decodeURIComponent('${encodedName}'))">删除</button>
-                </div>
-              </div>
-            `;
-          })
-          .join('');
-        gallery.querySelectorAll('img').forEach((img) => bindRetryableImage(img));
-      }
-    }
-    updateImagineTabStats(null, items.length);
+    renderImagineTabGalleryCards(items);
     return items;
   } catch (e) {
     if (e?.message === '请先填写 API Key') {
@@ -1192,6 +1265,7 @@ function buildImagineGenerateBody() {
 async function handleImagineGeneratedUrls(urls) {
   if (!Array.isArray(urls) || !urls.length) return;
   urls.forEach((src) => addWorkflowImage(src, 'imagine-generate'));
+  prependImagineTabGeneratedCards(urls);
   if (!workflowState.selectedImage) {
     setWorkflowSelection(urls[0], 'imagine-generate', true);
   } else {
@@ -1212,6 +1286,7 @@ async function generateImagineTabNonStream(body) {
   const urls = extractImagineImageUrls(payload);
   if (!urls.length) throw new Error('未返回有效图片');
   await handleImagineGeneratedUrls(urls);
+  return urls;
 }
 
 async function generateImagineTabStream(body) {
@@ -1267,6 +1342,7 @@ async function generateImagineTabStream(body) {
 
   if (!completedUrls.length) throw new Error('未返回有效图片');
   await handleImagineGeneratedUrls(completedUrls);
+  return completedUrls;
 }
 
 async function generateImagineTab() {
@@ -1277,13 +1353,14 @@ async function generateImagineTab() {
   setImagineTabGeneratingState(true);
   setImagineTabProgress(true, 5, '准备中...', '');
   try {
+    let generatedUrls = [];
     if (body.stream) {
-      await generateImagineTabStream(body);
+      generatedUrls = await generateImagineTabStream(body);
     } else {
-      await generateImagineTabNonStream(body);
+      generatedUrls = await generateImagineTabNonStream(body);
       setImagineTabProgress(true, 100, '完成', '');
     }
-    await refreshImagineTabData(true);
+    await refreshImagineTabGalleryWithRetry(generatedUrls);
     showToast('Imagine 生成完成', 'success');
   } catch (e) {
     setImagineTabProgress(true, 100, '失败', e?.message || String(e));
@@ -1400,14 +1477,6 @@ async function refreshWorkflowNsfw() {
   }
 }
 
-function isLikelyVideoAssetUrl(url) {
-  const value = String(url || '').trim().toLowerCase();
-  if (!value) return false;
-  if (value.includes('/images/')) return true;
-  if (value.includes('/v1/files/video/')) return true;
-  return /\.(mp4|webm|mov|m4v|avi)(?:$|[?#])/i.test(value);
-}
-
 function extractVideoUrlsFromContent(content) {
   const urls = [];
   const pushUrl = (raw) => {
@@ -1415,7 +1484,6 @@ function extractVideoUrlsFromContent(content) {
     if (!value) return;
     const absolute = toAbsoluteUrl(value);
     if (!absolute) return;
-    if (!isLikelyVideoAssetUrl(absolute)) return;
     if (!urls.includes(absolute)) urls.push(absolute);
   };
   const html = String(content || '').trim();
@@ -1461,10 +1529,7 @@ function addVideoClip(url, selected = true) {
 
 function captureVideoClipsFromContent(content) {
   const urls = extractVideoUrlsFromContent(content);
-  if (!urls.length) return;
-  const proxyUrls = urls.filter((url) => String(url).includes('/images/'));
-  const picked = (proxyUrls.length ? proxyUrls : urls)[(proxyUrls.length ? proxyUrls : urls).length - 1];
-  addVideoClip(picked, true);
+  urls.forEach((url) => addVideoClip(url, true));
 }
 
 function selectAllVideoClips(flag) {

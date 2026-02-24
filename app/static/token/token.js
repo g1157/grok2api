@@ -14,6 +14,8 @@ let autoRegisterLastAdded = 0;
 let liveStatsTimer = null;
 let isWorkersRuntime = false;
 let isNsfwRefreshAllRunning = false;
+let imaginePoolStatus = { total: 0, available: 0, tokens: [] };
+let imagineStatusByMasked = new Map();
 
 let displayTokens = [];
 const filterState = {
@@ -27,6 +29,177 @@ const filterState = {
 function normalizeSsoToken(token) {
   const v = String(token || '').trim();
   return v.startsWith('sso=') ? v.slice(4).trim() : v;
+}
+
+function maskImagineToken(token) {
+  const raw = normalizeSsoToken(token);
+  if (!raw) return '';
+  return raw.length > 12 ? `${raw.slice(0, 8)}...${raw.slice(-4)}` : '***';
+}
+
+function getImagineStatusForToken(token) {
+  const masked = maskImagineToken(token);
+  if (!masked) return null;
+  return imagineStatusByMasked.get(masked) || null;
+}
+
+function getImagineHealthMeta(item) {
+  const status = getImagineStatusForToken(item?.token);
+  if (!status) {
+    return { label: '未接入', className: 'badge-gray', availableText: '-' };
+  }
+
+  const failCount = Number(status.fail_count || 0);
+  const available = Boolean(status.available);
+  if (!available && failCount >= 5) {
+    return { label: '异常', className: 'badge-red', availableText: '不可用' };
+  }
+  if (!available) {
+    return { label: '限流', className: 'badge-orange', availableText: '不可用' };
+  }
+  if (failCount > 0) {
+    return { label: '告警', className: 'badge-orange', availableText: '可用' };
+  }
+  return { label: '正常', className: 'badge-green', availableText: '可用' };
+}
+
+function updateImagineStatCards() {
+  const setText = (id, text) => {
+    const el = document.getElementById(id);
+    if (el) el.innerText = text;
+  };
+  setText('stat-imagine-total', Number(imaginePoolStatus.total || 0).toLocaleString());
+  setText('stat-imagine-available', Number(imaginePoolStatus.available || 0).toLocaleString());
+}
+
+function renderImagineMonitorTable() {
+  const tbody = document.getElementById('imagine-monitor-body');
+  if (!tbody) return;
+  const tokens = Array.isArray(imaginePoolStatus.tokens) ? imaginePoolStatus.tokens : [];
+  if (!tokens.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-[var(--accents-4)] py-4">暂无 Imagine Token 数据</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = tokens.map((t) => {
+    const token = escapeHtml(String(t.token || '***'));
+    const daily = Number(t.daily_count || 0);
+    const dailyLimit = Number(t.daily_limit || 0);
+    const remain = Math.max(0, dailyLimit - daily);
+    const failCount = Number(t.fail_count || 0);
+    const available = Boolean(t.available);
+    let healthClass = 'badge-green';
+    let healthText = '正常';
+    if (!available && failCount >= 5) {
+      healthClass = 'badge-red';
+      healthText = '异常';
+    } else if (!available || failCount > 0) {
+      healthClass = 'badge-orange';
+      healthText = '告警';
+    }
+    return `
+      <tr>
+        <td class="text-left font-mono text-xs">${token}</td>
+        <td>${daily}</td>
+        <td>${remain}</td>
+        <td>${failCount}</td>
+        <td>${available ? '可用' : '不可用'}</td>
+        <td><span class="badge ${healthClass}">${healthText}</span></td>
+      </tr>
+    `;
+  }).join('');
+}
+
+async function loadImagineStatus(silent = true, rerenderTokenTable = false) {
+  try {
+    const res = await fetch('/api/v1/imagine/status', {
+      headers: buildAuthHeaders(apiKey)
+    });
+    if (res.status === 401) {
+      logout();
+      return false;
+    }
+    const payload = await parseJsonSafely(res);
+    if (!res.ok) {
+      if (!silent) {
+        showToast(extractApiErrorMessage(payload, `Imagine 状态获取失败 (${res.status})`), 'error');
+      }
+      return false;
+    }
+
+    const pool = payload && payload.sso_pool ? payload.sso_pool : {};
+    const tokens = Array.isArray(pool.tokens) ? pool.tokens : [];
+    imaginePoolStatus = {
+      total: Number(pool.total || tokens.length || 0),
+      available: Number(pool.available || 0),
+      tokens
+    };
+
+    const nextMap = new Map();
+    tokens.forEach((it) => {
+      const masked = String(it?.token || '').trim();
+      if (masked) nextMap.set(masked, it);
+    });
+    imagineStatusByMasked = nextMap;
+    updateImagineStatCards();
+    renderImagineMonitorTable();
+    if (rerenderTokenTable) {
+      renderTable();
+    }
+    return true;
+  } catch (e) {
+    if (!silent) {
+      showToast('Imagine 状态获取失败: ' + (e?.message || e), 'error');
+    }
+    return false;
+  }
+}
+
+async function refreshImagineMonitor() {
+  const ok = await loadImagineStatus(false, true);
+  if (ok) showToast('Imagine 监控已更新', 'success');
+}
+
+async function reloadImagineSso() {
+  try {
+    const res = await fetch('/api/v1/imagine/sso/reload', {
+      method: 'POST',
+      headers: buildAuthHeaders(apiKey)
+    });
+    if (res.status === 401) {
+      logout();
+      return;
+    }
+    const payload = await parseJsonSafely(res);
+    if (!res.ok) {
+      throw new Error(extractApiErrorMessage(payload, `HTTP ${res.status}`));
+    }
+    await loadImagineStatus(true, true);
+    showToast('Imagine SSO 已重新加载', 'success');
+  } catch (e) {
+    showToast('重新加载失败: ' + (e?.message || e), 'error');
+  }
+}
+
+async function resetImagineDailyUsage() {
+  try {
+    const res = await fetch('/api/v1/imagine/sso/reset', {
+      method: 'POST',
+      headers: buildAuthHeaders(apiKey)
+    });
+    if (res.status === 401) {
+      logout();
+      return;
+    }
+    const payload = await parseJsonSafely(res);
+    if (!res.ok) {
+      throw new Error(extractApiErrorMessage(payload, `HTTP ${res.status}`));
+    }
+    await loadImagineStatus(true, true);
+    showToast('Imagine 用量已重置', 'success');
+  } catch (e) {
+    showToast('重置失败: ' + (e?.message || e), 'error');
+  }
 }
 
 function poolToType(pool) {
@@ -305,6 +478,7 @@ async function refreshStatsOnly() {
     setText('stat-chat-quota', chatQuota.toLocaleString());
     setText('stat-image-quota', imageQuota.toLocaleString());
     setText('stat-total-calls', totalCalls.toLocaleString());
+    await loadImagineStatus(true, false);
   } catch (e) {
     // Silent by design; do not spam toasts.
   }
@@ -320,6 +494,7 @@ async function loadData() {
       allTokens = data;
       processTokens(data);
       updateStats(data);
+      await loadImagineStatus(true, false);
       applyFilters();
       renderTable();
     } else if (res.status === 401) {
@@ -392,6 +567,7 @@ function updateStats(data) {
   setText('stat-chat-quota', chatQuota.toLocaleString());
   setText('stat-image-quota', imageQuota.toLocaleString());
   setText('stat-total-calls', totalCalls.toLocaleString());
+  updateImagineStatCards();
 }
 
 function renderTable() {
@@ -457,6 +633,12 @@ function renderTable() {
     tdStatus.innerHTML = `<span class="badge ${statusClass}">${isTokenActive(item) ? 'active' : (isTokenExhausted(item) ? 'exhausted' : 'invalid')}</span>`;
 
     // Quota (Center)
+    const tdImagine = document.createElement('td');
+    tdImagine.className = 'text-center';
+    const imagineHealth = getImagineHealthMeta(item);
+    tdImagine.innerHTML = `<span class="badge ${imagineHealth.className}">${escapeHtml(imagineHealth.label)}</span>`;
+
+    // Quota (Center)
     const tdQuota = document.createElement('td');
     tdQuota.className = 'text-center font-mono text-xs';
     tdQuota.innerText = item.quota_known ? String(item.quota) : '-';
@@ -487,6 +669,7 @@ function renderTable() {
     tr.appendChild(tdToken);
     tr.appendChild(tdType);
     tr.appendChild(tdStatus);
+    tr.appendChild(tdImagine);
     tr.appendChild(tdQuota);
     tr.appendChild(tdNote);
     tr.appendChild(tdActions);

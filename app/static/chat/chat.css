@@ -344,6 +344,32 @@
   gap: 10px;
 }
 
+.imagine-tab-shell {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.imagine-tab-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, #fff, #fafafa);
+  flex-wrap: wrap;
+}
+
+.imagine-workspace-frame {
+  width: 100%;
+  min-height: 920px;
+  border: none;
+  display: block;
+  background: #fff;
+}
+
 .video-workflow-meta {
   display: flex;
   flex-direction: column;
@@ -599,6 +625,10 @@
     flex-direction: column;
   }
 
+  .imagine-workspace-frame {
+    min-height: 860px;
+  }
+
   .video-workflow .workflow-preview.workflow-preview-large {
     height: 180px;
   }
@@ -676,6 +706,10 @@
   .workflow-head {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .imagine-workspace-frame {
+    min-height: 760px;
   }
 
   .workflow-selected {

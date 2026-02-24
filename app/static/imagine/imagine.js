@@ -1,11 +1,23 @@
 let apiKey = null;
 const WORKFLOW_STORAGE_KEY = 'grok2api_workflow_state_v2';
 let workflowApiBearer = '';
+const imagineEmbedded = new URLSearchParams(window.location.search).get('embedded') === '1';
 
 let workflowBusy = false;
 let workflowState = normalizeWorkflowState({});
 
+function applyEmbeddedMode() {
+  if (!imagineEmbedded) return;
+  document.documentElement.classList.add('imagine-embedded');
+  document.body.classList.add('imagine-embedded');
+  const header = document.getElementById('app-header');
+  if (header) header.style.display = 'none';
+  const footer = document.getElementById('app-footer');
+  if (footer) footer.style.display = 'none';
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
+  applyEmbeddedMode();
   apiKey = await ensureApiKey();
   if (!apiKey) return;
   loadWorkflowState();

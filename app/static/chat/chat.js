@@ -17,6 +17,7 @@ let imageContinuousActive = 0;
 let imageContinuousLastError = '';
 let imageContinuousRunToken = 0;
 let imageContinuousDesiredConcurrency = 1;
+let imagineWorkspaceLoaded = false;
 const PREFERRED_CHAT_MODEL = 'grok-4.20-beta';
 let chatSending = false;
 let workflowBusy = false;
@@ -42,6 +43,28 @@ function q(id) {
 
 function isAdminChat() {
   return Boolean(window.__CHAT_ADMIN__);
+}
+
+function getEmbeddedImagineUrl() {
+  const url = new URL('/admin/imagine', window.location.origin);
+  url.searchParams.set('embedded', '1');
+  return url.toString();
+}
+
+function ensureImagineWorkspaceLoaded(force = false) {
+  const frame = q('imagine-workspace-frame');
+  if (!frame) return;
+  if (!force && imagineWorkspaceLoaded && frame.src) return;
+  frame.src = getEmbeddedImagineUrl();
+  imagineWorkspaceLoaded = true;
+}
+
+function reloadImagineWorkspace() {
+  ensureImagineWorkspaceLoaded(true);
+}
+
+function openImagineStandaloneInNewTab() {
+  window.open('/admin/imagine', '_blank', 'noopener');
 }
 
 function getUserApiKey() {
@@ -1447,10 +1470,11 @@ function switchTab(tab) {
     stopImageContinuous();
   }
   currentTab = tab;
-  ['chat', 'image', 'edit', 'video'].forEach((t) => {
+  ['chat', 'imagine', 'image', 'edit', 'video'].forEach((t) => {
     q(`tab-${t}`).classList.toggle('active', t === tab);
     q(`panel-${t}`).classList.toggle('hidden', t !== tab);
   });
+  if (tab === 'imagine') ensureImagineWorkspaceLoaded(false);
   refreshModels();
   if (tab === 'image') refreshImageGenerationMethod();
   renderWorkflowState();

@@ -10,7 +10,7 @@
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-sans/style.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-mono/style.css" rel="stylesheet">
   <link href="/static/common/common.css?v=3" rel="stylesheet">
-  <link href="/static/chat/chat.css?v=5" rel="stylesheet">
+  <link href="/static/chat/chat.css?v=6" rel="stylesheet">
   <link href="/static/common/toast.css" rel="stylesheet">
   <script>
     window.__CHAT_ADMIN__ = true;
@@ -48,6 +48,7 @@
     <div class="card">
       <div class="tabs">
         <button id="tab-chat" class="tab active" onclick="switchTab('chat')">聊天</button>
+        <button id="tab-imagine" class="tab" onclick="switchTab('imagine')">Imagine</button>
         <button id="tab-image" class="tab" onclick="switchTab('image')">生图</button>
         <button id="tab-edit" class="tab" onclick="switchTab('edit')">图片编辑</button>
         <button id="tab-video" class="tab" onclick="switchTab('video')">生成视频</button>
@@ -90,6 +91,22 @@
           </div>
           <textarea id="chat-input" class="geist-input h-24" placeholder="输入消息..."></textarea>
           <div id="chat-attach-preview" class="attach-preview hidden"></div>
+        </div>
+      </div>
+
+      <div id="panel-imagine" class="panel hidden">
+        <div class="imagine-tab-shell">
+          <div class="imagine-tab-head">
+            <div>
+              <div class="text-sm font-semibold tracking-tight">Imagine 工作台</div>
+              <div class="text-xs text-[var(--accents-5)] mt-1">完整接入独立 Imagine 页面能力（生图、图片库、SSO 状态、全局工作流）。</div>
+            </div>
+            <div class="flex items-center gap-2 flex-wrap">
+              <button class="geist-button-outline text-xs px-3" onclick="reloadImagineWorkspace()">刷新工作台</button>
+              <button class="geist-button-outline text-xs px-3" onclick="openImagineStandaloneInNewTab()">新窗口打开</button>
+            </div>
+          </div>
+          <iframe id="imagine-workspace-frame" class="imagine-workspace-frame" src="" loading="lazy"></iframe>
         </div>
       </div>
 
@@ -265,7 +282,7 @@
   <script src="/static/common/admin-auth.js"></script>
   <script src="/static/common/header.js?v=4"></script>
   <script src="/static/common/footer.js"></script>
-  <script src="/static/chat/chat.js?v=7"></script>
+  <script src="/static/chat/chat.js?v=8"></script>
 </body>
 
 </html>

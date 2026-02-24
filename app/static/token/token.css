@@ -198,6 +198,18 @@
       align-items: flex-start;
     }
 
+    .imagine-monitor-box {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #fff;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+
+    #imagine-monitor-body td {
+      font-size: 12px;
+    }
+
     #batch-actions {
       background: rgba(255, 255, 255, 0.92);
       border: 1px solid var(--border);

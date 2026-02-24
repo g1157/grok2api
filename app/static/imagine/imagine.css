@@ -1,5 +1,15 @@
 /* Imagine page styles — extends common.css Geist theme */
 
+body.imagine-embedded #app-header,
+body.imagine-embedded #app-footer {
+  display: none !important;
+}
+
+body.imagine-embedded main {
+  max-width: none !important;
+  padding: 0 !important;
+}
+
 /* Progress bar */
 .imagine-progress-track {
   height: 4px;

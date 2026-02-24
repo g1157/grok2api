@@ -36,6 +36,7 @@ let workflowCapabilities = {
   parentPostEndpoint: '/v1/video/parent-post',
   videoStitchEnabled: true,
 };
+let imagineAdminSessionAuth = '';
 
 function q(id) {
   return document.getElementById(id);
@@ -52,6 +53,96 @@ function getUserApiKey() {
 function buildApiHeaders() {
   const k = getUserApiKey();
   return k ? { Authorization: `Bearer ${k}` } : {};
+}
+
+function extractApiErrorMessage(payload, statusCode = 0, fallbackText = '') {
+  const errorField = payload?.error;
+  const fromErrorObject =
+    errorField && typeof errorField === 'object'
+      ? String(errorField?.message || errorField?.detail || errorField?.code || '').trim()
+      : '';
+  const fromString = typeof errorField === 'string' ? errorField.trim() : '';
+  const fromPayload = String(payload?.detail || payload?.message || '').trim();
+  const fromFallback = String(fallbackText || '').trim();
+  return fromErrorObject || fromString || fromPayload || fromFallback || (statusCode ? `HTTP ${statusCode}` : '请求失败');
+}
+
+function isSessionExpiredError(payload, statusCode = 0) {
+  const code = String(payload?.code || payload?.error?.code || '').trim().toUpperCase();
+  if (statusCode === 401 && (code === 'SESSION_EXPIRED' || code === 'MISSING_SESSION')) return true;
+  const msg = extractApiErrorMessage(payload, 0, '').toLowerCase();
+  return (
+    msg.includes('session_expired')
+    || msg.includes('session expired')
+    || msg.includes('会话已过期')
+    || msg.includes('缺少会话')
+  );
+}
+
+async function buildImagineTabHeaders(extraHeaders = {}, forceSessionRefresh = false) {
+  if (isAdminChat()) {
+    if ((forceSessionRefresh || !imagineAdminSessionAuth) && typeof ensureApiKey === 'function') {
+      const session = await ensureApiKey();
+      imagineAdminSessionAuth = typeof session === 'string' ? session.trim() : '';
+    }
+    if (imagineAdminSessionAuth) {
+      return { Authorization: imagineAdminSessionAuth, ...extraHeaders };
+    }
+  }
+  return { ...buildApiHeaders(), ...extraHeaders };
+}
+
+async function fetchImagineTabJson(path, init = {}) {
+  const baseHeaders = init.headers || {};
+  const requestInit = { ...init };
+  delete requestInit.headers;
+
+  const run = async (forceSessionRefresh = false) => {
+    const headers = await buildImagineTabHeaders(baseHeaders, forceSessionRefresh);
+    if (!headers.Authorization) throw new Error('请先填写 API Key');
+    const res = await fetch(path, { ...requestInit, headers });
+    const payload = await res.json().catch(() => ({}));
+    return { res, payload };
+  };
+
+  let result = await run(false);
+  if (isAdminChat() && result.res.status === 401 && isSessionExpiredError(result.payload, result.res.status)) {
+    imagineAdminSessionAuth = '';
+    result = await run(true);
+  }
+  return result;
+}
+
+async function fetchImagineTabStream(path, init = {}) {
+  const baseHeaders = init.headers || {};
+  const requestInit = { ...init };
+  delete requestInit.headers;
+
+  const run = async (forceSessionRefresh = false) => {
+    const headers = await buildImagineTabHeaders(baseHeaders, forceSessionRefresh);
+    if (!headers.Authorization) throw new Error('请先填写 API Key');
+    const res = await fetch(path, { ...requestInit, headers });
+    if (res.ok && res.body) {
+      return { res, payload: null, rawError: '' };
+    }
+    const rawError = await res.text().catch(() => '');
+    let payload = {};
+    if (rawError) {
+      try {
+        payload = JSON.parse(rawError);
+      } catch (e) {
+        payload = { error: rawError };
+      }
+    }
+    return { res, payload, rawError };
+  };
+
+  let result = await run(false);
+  if (isAdminChat() && result.res.status === 401 && isSessionExpiredError(result.payload, result.res.status)) {
+    imagineAdminSessionAuth = '';
+    result = await run(true);
+  }
+  return result;
 }
 
 function escapeHtml(s) {
@@ -401,6 +492,7 @@ async function init() {
   if (isAdminChat()) {
     const adminSession = await ensureApiKey();
     if (adminSession === null) return;
+    imagineAdminSessionAuth = typeof adminSession === 'string' ? adminSession.trim() : '';
     try {
       const res = await fetch('/api/v1/admin/config', { headers: buildAuthHeaders(adminSession) });
       if (res.status === 401) return logout();
@@ -825,17 +917,10 @@ function extractImagineImageUrls(payload) {
 }
 
 async function loadImagineTabSsoStatus(silent = true) {
-  const headers = buildApiHeaders();
-  if (!headers.Authorization) {
-    if (!silent) showToast('请先填写 API Key', 'warning');
-    return null;
-  }
-
   const tbody = q('imagine-tab-sso-body');
   try {
-    const res = await fetch('/api/v1/imagine/status', { headers });
-    const payload = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(payload?.error || payload?.detail || `HTTP ${res.status}`);
+    const { res, payload } = await fetchImagineTabJson('/api/v1/imagine/status');
+    if (!res.ok) throw new Error(extractApiErrorMessage(payload, res.status));
     const pool = payload?.sso_pool || {};
     const tokens = Array.isArray(pool.tokens) ? pool.tokens : [];
 
@@ -868,6 +953,10 @@ async function loadImagineTabSsoStatus(silent = true) {
     }
     return pool;
   } catch (e) {
+    if (e?.message === '请先填写 API Key') {
+      if (!silent) showToast('请先填写 API Key', 'warning');
+      return null;
+    }
     if (tbody) {
       tbody.innerHTML = `<tr><td colspan="5" class="text-center text-[var(--error)] py-4">加载失败: ${escapeHtml(e?.message || e)}</td></tr>`;
     }
@@ -877,16 +966,9 @@ async function loadImagineTabSsoStatus(silent = true) {
 }
 
 async function loadImagineTabGallery(silent = true) {
-  const headers = buildApiHeaders();
-  if (!headers.Authorization) {
-    if (!silent) showToast('请先填写 API Key', 'warning');
-    return [];
-  }
-
   try {
-    const res = await fetch('/api/v1/imagine/gallery', { headers });
-    const payload = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(payload?.error || payload?.detail || `HTTP ${res.status}`);
+    const { res, payload } = await fetchImagineTabJson('/api/v1/imagine/gallery');
+    if (!res.ok) throw new Error(extractApiErrorMessage(payload, res.status));
 
     const items = Array.isArray(payload?.data) ? payload.data : (Array.isArray(payload?.images) ? payload.images : []);
     const gallery = q('imagine-tab-gallery');
@@ -919,6 +1001,10 @@ async function loadImagineTabGallery(silent = true) {
     updateImagineTabStats(null, items.length);
     return items;
   } catch (e) {
+    if (e?.message === '请先填写 API Key') {
+      if (!silent) showToast('请先填写 API Key', 'warning');
+      return [];
+    }
     const gallery = q('imagine-tab-gallery');
     if (gallery) gallery.innerHTML = `<div class="workflow-empty">加载失败: ${escapeHtml(e?.message || e)}</div>`;
     if (!silent) showToast(`Imagine 图片库加载失败: ${e?.message || e}`, 'error');
@@ -941,66 +1027,52 @@ async function deleteImagineTabImage(name) {
   const filename = String(name || '').trim();
   if (!filename) return;
   if (!confirm('确认删除这张图片吗？')) return;
-  const headers = buildApiHeaders();
-  if (!headers.Authorization) return showToast('请先填写 API Key', 'warning');
   try {
-    const res = await fetch(`/api/v1/imagine/gallery/${encodeURIComponent(filename)}`, {
+    const { res, payload } = await fetchImagineTabJson(`/api/v1/imagine/gallery/${encodeURIComponent(filename)}`, {
       method: 'DELETE',
-      headers,
     });
-    const payload = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(payload?.error || payload?.detail || `HTTP ${res.status}`);
+    if (!res.ok) throw new Error(extractApiErrorMessage(payload, res.status));
     await loadImagineTabGallery(true);
     showToast('删除成功', 'success');
   } catch (e) {
-    showToast(`删除失败: ${e?.message || e}`, 'error');
+    showToast(`删除失败: ${e?.message || e}`, e?.message === '请先填写 API Key' ? 'warning' : 'error');
   }
 }
 
 async function clearImagineTabGallery() {
   if (!confirm('确认清空 Imagine 图片库吗？')) return;
-  const headers = buildApiHeaders();
-  if (!headers.Authorization) return showToast('请先填写 API Key', 'warning');
   try {
-    const res = await fetch('/api/v1/imagine/gallery/clear', {
+    const { res, payload } = await fetchImagineTabJson('/api/v1/imagine/gallery/clear', {
       method: 'POST',
-      headers,
     });
-    const payload = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(payload?.error || payload?.detail || `HTTP ${res.status}`);
+    if (!res.ok) throw new Error(extractApiErrorMessage(payload, res.status));
     await refreshImagineTabData(true);
     showToast('已清空图片库', 'success');
   } catch (e) {
-    showToast(`清空失败: ${e?.message || e}`, 'error');
+    showToast(`清空失败: ${e?.message || e}`, e?.message === '请先填写 API Key' ? 'warning' : 'error');
   }
 }
 
 async function reloadImagineTabSso() {
-  const headers = buildApiHeaders();
-  if (!headers.Authorization) return showToast('请先填写 API Key', 'warning');
   try {
-    const res = await fetch('/api/v1/imagine/sso/reload', { method: 'POST', headers });
-    const payload = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(payload?.error || payload?.detail || `HTTP ${res.status}`);
+    const { res, payload } = await fetchImagineTabJson('/api/v1/imagine/sso/reload', { method: 'POST' });
+    if (!res.ok) throw new Error(extractApiErrorMessage(payload, res.status));
     await loadImagineTabSsoStatus(true);
     showToast('Imagine SSO 已重载', 'success');
   } catch (e) {
-    showToast(`重载失败: ${e?.message || e}`, 'error');
+    showToast(`重载失败: ${e?.message || e}`, e?.message === '请先填写 API Key' ? 'warning' : 'error');
   }
 }
 
 async function resetImagineTabSso() {
   if (!confirm('确认重置 Imagine 每日用量吗？')) return;
-  const headers = buildApiHeaders();
-  if (!headers.Authorization) return showToast('请先填写 API Key', 'warning');
   try {
-    const res = await fetch('/api/v1/imagine/sso/reset', { method: 'POST', headers });
-    const payload = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(payload?.error || payload?.detail || `HTTP ${res.status}`);
+    const { res, payload } = await fetchImagineTabJson('/api/v1/imagine/sso/reset', { method: 'POST' });
+    if (!res.ok) throw new Error(extractApiErrorMessage(payload, res.status));
     await loadImagineTabSsoStatus(true);
     showToast('Imagine 每日用量已重置', 'success');
   } catch (e) {
-    showToast(`重置失败: ${e?.message || e}`, 'error');
+    showToast(`重置失败: ${e?.message || e}`, e?.message === '请先填写 API Key' ? 'warning' : 'error');
   }
 }
 
@@ -1032,30 +1104,29 @@ async function handleImagineGeneratedUrls(urls) {
   }
 }
 
-async function generateImagineTabNonStream(body, headers) {
-  const res = await fetch('/api/v1/imagine/generate', {
+async function generateImagineTabNonStream(body) {
+  const { res, payload } = await fetchImagineTabJson('/api/v1/imagine/generate', {
     method: 'POST',
-    headers: { ...headers, 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...body, stream: false }),
   });
-  const payload = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(payload?.error || payload?.detail || `HTTP ${res.status}`);
+    throw new Error(extractApiErrorMessage(payload, res.status));
   }
   const urls = extractImagineImageUrls(payload);
   if (!urls.length) throw new Error('未返回有效图片');
   await handleImagineGeneratedUrls(urls);
 }
 
-async function generateImagineTabStream(body, headers) {
-  const res = await fetch('/api/v1/imagine/generate', {
+async function generateImagineTabStream(body) {
+  const { res, payload, rawError } = await fetchImagineTabStream('/api/v1/imagine/generate', {
     method: 'POST',
-    headers: { ...headers, 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...body, stream: true }),
   });
   if (!res.ok || !res.body) {
-    const t = await res.text().catch(() => '');
-    throw new Error(`HTTP ${res.status}: ${t.slice(0, 200)}`);
+    const fallback = String(rawError || '').slice(0, 200);
+    throw new Error(extractApiErrorMessage(payload, res.status, fallback || `HTTP ${res.status}`));
   }
 
   const reader = res.body.getReader();
@@ -1104,9 +1175,6 @@ async function generateImagineTabStream(body, headers) {
 
 async function generateImagineTab() {
   if (imagineTabGenerating) return showToast('任务进行中，请稍候', 'warning');
-  const headers = buildApiHeaders();
-  if (!headers.Authorization) return showToast('请先填写 API Key', 'warning');
-
   const body = buildImagineGenerateBody();
   if (!body.prompt) return showToast('请输入 Imagine prompt', 'warning');
 
@@ -1114,9 +1182,9 @@ async function generateImagineTab() {
   setImagineTabProgress(true, 5, '准备中...', '');
   try {
     if (body.stream) {
-      await generateImagineTabStream(body, headers);
+      await generateImagineTabStream(body);
     } else {
-      await generateImagineTabNonStream(body, headers);
+      await generateImagineTabNonStream(body);
       setImagineTabProgress(true, 100, '完成', '');
     }
     await refreshImagineTabData(true);

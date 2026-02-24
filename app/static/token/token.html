@@ -139,6 +139,17 @@
             <span>额度用尽</span>
           </label>
         </div>
+        <div class="filter-group flex items-center gap-2">
+          <span class="text-xs text-[var(--accents-5)]">Imagine健康</span>
+          <select id="filter-imagine-health" class="geist-input h-7 text-xs min-w-[110px]" onchange="onFilterChange()">
+            <option value="all">全部</option>
+            <option value="healthy">正常</option>
+            <option value="warning">告警</option>
+            <option value="throttled">限流</option>
+            <option value="abnormal">异常</option>
+            <option value="unlinked">未接入</option>
+          </select>
+        </div>
         <div class="filter-summary ml-auto flex items-center gap-3">
           <span class="text-xs text-[var(--accents-5)]">结果 <span id="filter-result-count">0</span></span>
           <button onclick="resetFilters()" class="geist-button-outline text-xs px-3 h-7">清空筛选</button>

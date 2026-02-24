@@ -545,6 +545,20 @@ function normalizeWorkflowImageInput(raw: string, origin: string): string {
   }
 }
 
+function buildSourceFetchHeaders(imageUrl: string, origin: string, authHeader: string): Record<string, string> | undefined {
+  const auth = String(authHeader || "").trim();
+  if (!auth) return undefined;
+  try {
+    const u = new URL(imageUrl, origin);
+    if (u.origin === origin) {
+      return { Authorization: auth };
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
 function parseImageConcurrencyOrError(
   input: unknown,
 ): { value: number } | { error: { message: string; code: string } } {
@@ -1215,6 +1229,7 @@ openAiRoutes.post("/video/parent-post", async (c) => {
   try {
     const body = (await c.req.json()) as { image_url?: unknown };
     const origin = new URL(c.req.url).origin;
+    const incomingAuth = c.req.header("Authorization") ?? c.req.header("authorization") ?? "";
     const imageUrl = normalizeWorkflowImageInput(String(body?.image_url ?? ""), origin);
     if (!imageUrl) {
       return c.json(openAiError("Missing 'image_url'", "missing_image_url"), 400);
@@ -1230,9 +1245,15 @@ openAiRoutes.post("/video/parent-post", async (c) => {
 
     const cf = normalizeCfCookie(settingsBundle.grok.cf_clearance ?? "");
     const cookie = buildCookie(chosen.token, cf);
+    const sourceHeaders = buildSourceFetchHeaders(imageUrl, origin, incomingAuth);
 
     try {
-      const uploaded = await uploadImage(imageUrl, cookie, settingsBundle.grok);
+      const uploaded = await uploadImage(
+        imageUrl,
+        cookie,
+        settingsBundle.grok,
+        sourceHeaders ? { sourceHeaders } : undefined,
+      );
       const fileUri = String(uploaded.fileUri ?? "").trim();
       if (!fileUri) {
         throw new Error("Upload returned empty fileUri");
@@ -1264,6 +1285,7 @@ openAiRoutes.post("/chat/completions", async (c) => {
   const keyName = c.get("apiAuth").name ?? "Unknown";
 
   const origin = new URL(c.req.url).origin;
+  const incomingAuth = c.req.header("Authorization") ?? c.req.header("authorization") ?? "";
 
   let requestedModel = "";
   try {
@@ -1324,9 +1346,15 @@ openAiRoutes.post("/chat/completions", async (c) => {
       const { content, images } = extractContent(body.messages as any);
       const isVideoModel = Boolean(cfg.is_video_model);
       const imgInputs = isVideoModel && images.length > 1 ? images.slice(0, 1) : images;
+      const normalizedImgInputs = imgInputs
+        .map((u) => normalizeWorkflowImageInput(String(u ?? ""), origin))
+        .filter(Boolean);
 
       try {
-        const uploads = await mapLimit(imgInputs, 5, (u) => uploadImage(u, cookie, settingsBundle.grok));
+        const uploads = await mapLimit(normalizedImgInputs, 5, (u) => {
+          const sourceHeaders = buildSourceFetchHeaders(u, origin, incomingAuth);
+          return uploadImage(u, cookie, settingsBundle.grok, sourceHeaders ? { sourceHeaders } : undefined);
+        });
         const imgIds = uploads.map((u) => u.fileId).filter(Boolean);
         const imgUris = uploads.map((u) => u.fileUri).filter(Boolean);
 

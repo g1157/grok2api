@@ -24,11 +24,20 @@ const filterState = {
   statusActive: false,
   statusInvalid: false,
   statusExhausted: false,
+  imagineHealth: 'all',
 };
 
 function normalizeSsoToken(token) {
   const v = String(token || '').trim();
   return v.startsWith('sso=') ? v.slice(4).trim() : v;
+}
+
+function parseImportedTokens(rawText) {
+  return String(rawText || '')
+    .replace(/\r/g, '\n')
+    .split(/[\n,\s;，；]+/)
+    .map((part) => normalizeSsoToken(part))
+    .filter(Boolean);
 }
 
 function maskImagineToken(token) {
@@ -45,22 +54,19 @@ function getImagineStatusForToken(token) {
 
 function getImagineHealthMeta(item) {
   const status = getImagineStatusForToken(item?.token);
-  if (!status) {
-    return { label: '未接入', className: 'badge-gray' };
-  }
+  const failCount = Number(status?.fail_count || 0);
+  const available = Boolean(status?.available);
+  let key = 'healthy';
+  if (!status) key = 'unlinked';
+  else if (!available && failCount >= 5) key = 'abnormal';
+  else if (!available) key = 'throttled';
+  else if (failCount > 0) key = 'warning';
 
-  const failCount = Number(status.fail_count || 0);
-  const available = Boolean(status.available);
-  if (!available && failCount >= 5) {
-    return { label: '异常', className: 'badge-red' };
-  }
-  if (!available) {
-    return { label: '限流', className: 'badge-orange' };
-  }
-  if (failCount > 0) {
-    return { label: '告警', className: 'badge-orange' };
-  }
-  return { label: '正常', className: 'badge-green' };
+  if (key === 'abnormal') return { key, label: '异常', className: 'badge-red' };
+  if (key === 'throttled') return { key, label: '限流', className: 'badge-orange' };
+  if (key === 'warning') return { key, label: '告警', className: 'badge-orange' };
+  if (key === 'unlinked') return { key, label: '未接入', className: 'badge-gray' };
+  return { key, label: '正常', className: 'badge-green' };
 }
 
 function updateImagineStatCards() {
@@ -105,6 +111,7 @@ async function loadImagineStatus(silent = true, rerenderTokenTable = false) {
     imagineStatusByMasked = nextMap;
     updateImagineStatCards();
     if (rerenderTokenTable) {
+      applyFilters();
       renderTable();
     }
     return true;
@@ -264,6 +271,9 @@ function refreshFilterStateFromDom() {
   filterState.statusActive = getChecked('filter-status-active');
   filterState.statusInvalid = getChecked('filter-status-invalid');
   filterState.statusExhausted = getChecked('filter-status-exhausted');
+  const imagineEl = document.getElementById('filter-imagine-health');
+  const imagineValue = String(imagineEl?.value || 'all').trim();
+  filterState.imagineHealth = imagineValue || 'all';
 }
 
 function applyFilters() {
@@ -279,6 +289,9 @@ function applyFilters() {
       || (filterState.typeSuperSso && tokenType === 'ssoSuper');
 
     if (!matchesType) return false;
+    const imagineHealth = getImagineHealthMeta(item);
+    const matchesImagine = filterState.imagineHealth === 'all' || imagineHealth.key === filterState.imagineHealth;
+    if (!matchesImagine) return false;
     if (!hasStatusFilter) return true;
 
     const active = isTokenActive(item);
@@ -306,6 +319,8 @@ function resetFilters() {
       const el = document.getElementById(id);
       if (el) el.checked = false;
     });
+  const imagineEl = document.getElementById('filter-imagine-health');
+  if (imagineEl) imagineEl.value = 'all';
   applyFilters();
   renderTable();
 }
@@ -1191,33 +1206,46 @@ function closeImportModal() {
 }
 
 async function submitImport() {
-  const pool = document.getElementById('import-pool').value.trim() || 'ssoBasic';
-  const text = document.getElementById('import-text').value;
-  const lines = text.split('\n');
+  const poolEl = document.getElementById('import-pool');
+  const textEl = document.getElementById('import-text');
+  const pool = poolEl ? (poolEl.value.trim() || 'ssoBasic') : 'ssoBasic';
+  const parsedTokens = parseImportedTokens(textEl ? textEl.value : '');
+  if (!parsedTokens.length) {
+    return showToast('未识别到可导入的 Token', 'error');
+  }
 
-  lines.forEach(line => {
-    const t = normalizeSsoToken(line.trim());
-    if (t && !flatTokens.some(ft => getTokenKey(ft.token) === t)) {
-      flatTokens.push({
-        token: t,
-        pool: pool,
-        status: 'active',
-        quota: 80,
-        quota_known: true,
-        heavy_quota: -1,
-        heavy_quota_known: false,
-        token_type: poolToType(pool),
-        note: '',
-        use_count: 0,
-        _selected: false
-      });
+  const existing = new Set(flatTokens.map((ft) => getTokenKey(ft.token)));
+  let added = 0;
+  let skipped = 0;
+
+  parsedTokens.forEach((token) => {
+    const key = getTokenKey(token);
+    if (!key || existing.has(key)) {
+      skipped += 1;
+      return;
     }
+    existing.add(key);
+    flatTokens.push({
+      token,
+      pool,
+      status: 'active',
+      quota: 80,
+      quota_known: true,
+      heavy_quota: -1,
+      heavy_quota_known: false,
+      token_type: poolToType(pool),
+      note: '',
+      use_count: 0,
+      _selected: false
+    });
+    added += 1;
   });
 
   await syncToServer();
   closeImportModal();
   applyFilters();
   loadData();
+  showToast(`导入完成：新增 ${added}，跳过重复 ${skipped}`, added > 0 ? 'success' : 'warning');
 }
 
 // Export Logic

@@ -35,13 +35,17 @@ export async function uploadImage(
   imageInput: string,
   cookie: string,
   settings: GrokSettings,
+  options?: { sourceHeaders?: HeadersInit },
 ): Promise<{ fileId: string; fileUri: string }> {
   let base64 = "";
   let mime = MIME_DEFAULT;
   let filename = "image.jpg";
 
   if (isUrl(imageInput)) {
-    const r = await fetch(imageInput, { redirect: "follow" });
+    const r = await fetch(imageInput, {
+      redirect: "follow",
+      ...(options?.sourceHeaders ? { headers: options.sourceHeaders } : {}),
+    });
     if (!r.ok) throw new Error(`下载图片失败: ${r.status}`);
     mime = r.headers.get("content-type")?.split(";")[0] ?? MIME_DEFAULT;
     if (!mime.startsWith("image/")) mime = MIME_DEFAULT;
@@ -75,4 +79,3 @@ export async function uploadImage(
   const data = (await resp.json()) as { fileMetadataId?: string; fileUri?: string };
   return { fileId: data.fileMetadataId ?? "", fileUri: data.fileUri ?? "" };
 }
-

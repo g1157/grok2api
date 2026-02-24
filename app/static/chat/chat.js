@@ -17,7 +17,7 @@ let imageContinuousActive = 0;
 let imageContinuousLastError = '';
 let imageContinuousRunToken = 0;
 let imageContinuousDesiredConcurrency = 1;
-let imagineWorkspaceLoaded = false;
+let imagineTabGenerating = false;
 const PREFERRED_CHAT_MODEL = 'grok-4.20-beta';
 let chatSending = false;
 let workflowBusy = false;
@@ -43,28 +43,6 @@ function q(id) {
 
 function isAdminChat() {
   return Boolean(window.__CHAT_ADMIN__);
-}
-
-function getEmbeddedImagineUrl() {
-  const url = new URL('/admin/imagine', window.location.origin);
-  url.searchParams.set('embedded', '1');
-  return url.toString();
-}
-
-function ensureImagineWorkspaceLoaded(force = false) {
-  const frame = q('imagine-workspace-frame');
-  if (!frame) return;
-  if (!force && imagineWorkspaceLoaded && frame.src) return;
-  frame.src = getEmbeddedImagineUrl();
-  imagineWorkspaceLoaded = true;
-}
-
-function reloadImagineWorkspace() {
-  ensureImagineWorkspaceLoaded(true);
-}
-
-function openImagineStandaloneInNewTab() {
-  window.open('/admin/imagine', '_blank', 'noopener');
 }
 
 function getUserApiKey() {
@@ -425,6 +403,7 @@ async function init() {
   await refreshImageGenerationMethod();
   await detectWorkflowCapabilities();
   renderWorkflowState();
+  refreshImagineTabData(true);
 
   chatMessages = [];
   q('chat-messages').innerHTML = '';
@@ -742,6 +721,367 @@ function renderWorkflowState() {
   renderVideoClips();
 }
 
+function updateImagineTabStats(pool = null, galleryCount = null) {
+  const setText = (id, text) => {
+    const el = q(id);
+    if (el) el.textContent = String(text);
+  };
+  if (pool) {
+    setText('imagine-stat-total', pool.total ?? '-');
+    setText('imagine-stat-available', pool.available ?? '-');
+    setText('imagine-stat-status', Number(pool.available || 0) > 0 ? '正常' : '无可用');
+  }
+  if (galleryCount !== null && galleryCount !== undefined) {
+    setText('imagine-stat-gallery', galleryCount);
+  }
+}
+
+function setImagineTabGeneratingState(running) {
+  imagineTabGenerating = Boolean(running);
+  const btn = q('imagine-tab-generate-btn');
+  if (btn) btn.disabled = imagineTabGenerating;
+}
+
+function setImagineTabProgress(show, percent = 0, stage = '', status = '') {
+  const panel = q('imagine-tab-progress');
+  const bar = q('imagine-tab-progress-bar');
+  const stageEl = q('imagine-tab-progress-stage');
+  const statusEl = q('imagine-tab-progress-status');
+  if (panel) panel.classList.toggle('hidden', !show);
+  if (bar) bar.style.width = `${Math.max(0, Math.min(100, Number(percent) || 0))}%`;
+  if (stageEl) stageEl.textContent = stage || '';
+  if (statusEl) statusEl.textContent = status || '';
+}
+
+function normalizeImagineGalleryUrl(rawUrl, filename) {
+  const raw = String(rawUrl || '').trim();
+  const name = String(filename || '').trim();
+  if (raw) {
+    if (raw.startsWith('/api/v1/imagine/gallery/') && !raw.startsWith('/api/v1/imagine/gallery/file/')) {
+      const suffix = raw.slice('/api/v1/imagine/gallery/'.length);
+      if (suffix && !suffix.includes('/')) {
+        return `/api/v1/imagine/gallery/file/${suffix}`;
+      }
+    }
+    return raw;
+  }
+  if (name) return `/api/v1/imagine/gallery/file/${encodeURIComponent(name)}`;
+  return '';
+}
+
+function extractImagineImageUrls(payload) {
+  const items = Array.isArray(payload?.data) ? payload.data : [];
+  return items
+    .map((it) => toAbsoluteUrl(normalizeImagineGalleryUrl(it?.url, it?.filename)))
+    .filter(Boolean);
+}
+
+async function loadImagineTabSsoStatus(silent = true) {
+  const headers = buildApiHeaders();
+  if (!headers.Authorization) {
+    if (!silent) showToast('请先填写 API Key', 'warning');
+    return null;
+  }
+
+  const tbody = q('imagine-tab-sso-body');
+  try {
+    const res = await fetch('/api/v1/imagine/status', { headers });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload?.error || payload?.detail || `HTTP ${res.status}`);
+    const pool = payload?.sso_pool || {};
+    const tokens = Array.isArray(pool.tokens) ? pool.tokens : [];
+
+    updateImagineTabStats(pool, null);
+
+    if (tbody) {
+      if (!tokens.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-[var(--accents-4)] py-4">暂无 Token</td></tr>';
+      } else {
+        tbody.innerHTML = tokens
+          .map((t) => {
+            const failCount = Number(t.fail_count || 0);
+            const daily = Number(t.daily_count || 0);
+            const limit = Number(t.daily_limit || 0);
+            const remain = Math.max(0, limit - daily);
+            const badgeClass = failCount > 0 ? 'badge-red' : 'badge-green';
+            const badgeText = failCount > 0 ? '失败' : '正常';
+            return `
+              <tr>
+                <td class="text-left font-mono text-xs">${escapeHtml(String(t.token || '***'))}</td>
+                <td>${daily}</td>
+                <td>${remain}</td>
+                <td><span class="badge ${badgeClass}">${badgeText}</span></td>
+                <td class="text-xs text-[var(--accents-5)]">${t.available ? '可用' : '不可用'}</td>
+              </tr>
+            `;
+          })
+          .join('');
+      }
+    }
+    return pool;
+  } catch (e) {
+    if (tbody) {
+      tbody.innerHTML = `<tr><td colspan="5" class="text-center text-[var(--error)] py-4">加载失败: ${escapeHtml(e?.message || e)}</td></tr>`;
+    }
+    if (!silent) showToast(`Imagine 状态加载失败: ${e?.message || e}`, 'error');
+    return null;
+  }
+}
+
+async function loadImagineTabGallery(silent = true) {
+  const headers = buildApiHeaders();
+  if (!headers.Authorization) {
+    if (!silent) showToast('请先填写 API Key', 'warning');
+    return [];
+  }
+
+  try {
+    const res = await fetch('/api/v1/imagine/gallery', { headers });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload?.error || payload?.detail || `HTTP ${res.status}`);
+
+    const items = Array.isArray(payload?.data) ? payload.data : (Array.isArray(payload?.images) ? payload.images : []);
+    const gallery = q('imagine-tab-gallery');
+    if (gallery) {
+      if (!items.length) {
+        gallery.innerHTML = '<div class="workflow-empty">暂无图片</div>';
+      } else {
+        gallery.innerHTML = items
+          .map((img) => {
+            const name = String(img?.name || img?.filename || '').trim();
+            const rawUrl = normalizeImagineGalleryUrl(img?.url, name);
+            const src = toAbsoluteUrl(rawUrl);
+            const encodedSrc = encodeURIComponent(src);
+            const encodedName = encodeURIComponent(name);
+            const active = workflowState.selectedImage && toAbsoluteUrl(workflowState.selectedImage) === src;
+            return `
+              <div class="imagine-tab-card${active ? ' is-active' : ''}">
+                <img alt="imagine-image" src="${escapeHtml(src)}" />
+                <div class="imagine-tab-actions">
+                  <button type="button" onclick="syncImagineTabImage(decodeURIComponent('${encodedSrc}'))">设为工作图</button>
+                  <button type="button" onclick="deleteImagineTabImage(decodeURIComponent('${encodedName}'))">删除</button>
+                </div>
+              </div>
+            `;
+          })
+          .join('');
+        gallery.querySelectorAll('img').forEach((img) => bindRetryableImage(img));
+      }
+    }
+    updateImagineTabStats(null, items.length);
+    return items;
+  } catch (e) {
+    const gallery = q('imagine-tab-gallery');
+    if (gallery) gallery.innerHTML = `<div class="workflow-empty">加载失败: ${escapeHtml(e?.message || e)}</div>`;
+    if (!silent) showToast(`Imagine 图片库加载失败: ${e?.message || e}`, 'error');
+    return [];
+  }
+}
+
+async function refreshImagineTabData(silent = true) {
+  await Promise.all([loadImagineTabSsoStatus(silent), loadImagineTabGallery(silent)]);
+}
+
+function syncImagineTabImage(src) {
+  const value = toAbsoluteUrl(src);
+  if (!value) return;
+  setWorkflowSelection(value, 'imagine-gallery', true);
+  showToast('已设为工作图', 'success');
+}
+
+async function deleteImagineTabImage(name) {
+  const filename = String(name || '').trim();
+  if (!filename) return;
+  if (!confirm('确认删除这张图片吗？')) return;
+  const headers = buildApiHeaders();
+  if (!headers.Authorization) return showToast('请先填写 API Key', 'warning');
+  try {
+    const res = await fetch(`/api/v1/imagine/gallery/${encodeURIComponent(filename)}`, {
+      method: 'DELETE',
+      headers,
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload?.error || payload?.detail || `HTTP ${res.status}`);
+    await loadImagineTabGallery(true);
+    showToast('删除成功', 'success');
+  } catch (e) {
+    showToast(`删除失败: ${e?.message || e}`, 'error');
+  }
+}
+
+async function clearImagineTabGallery() {
+  if (!confirm('确认清空 Imagine 图片库吗？')) return;
+  const headers = buildApiHeaders();
+  if (!headers.Authorization) return showToast('请先填写 API Key', 'warning');
+  try {
+    const res = await fetch('/api/v1/imagine/gallery/clear', {
+      method: 'POST',
+      headers,
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload?.error || payload?.detail || `HTTP ${res.status}`);
+    await refreshImagineTabData(true);
+    showToast('已清空图片库', 'success');
+  } catch (e) {
+    showToast(`清空失败: ${e?.message || e}`, 'error');
+  }
+}
+
+async function reloadImagineTabSso() {
+  const headers = buildApiHeaders();
+  if (!headers.Authorization) return showToast('请先填写 API Key', 'warning');
+  try {
+    const res = await fetch('/api/v1/imagine/sso/reload', { method: 'POST', headers });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload?.error || payload?.detail || `HTTP ${res.status}`);
+    await loadImagineTabSsoStatus(true);
+    showToast('Imagine SSO 已重载', 'success');
+  } catch (e) {
+    showToast(`重载失败: ${e?.message || e}`, 'error');
+  }
+}
+
+async function resetImagineTabSso() {
+  if (!confirm('确认重置 Imagine 每日用量吗？')) return;
+  const headers = buildApiHeaders();
+  if (!headers.Authorization) return showToast('请先填写 API Key', 'warning');
+  try {
+    const res = await fetch('/api/v1/imagine/sso/reset', { method: 'POST', headers });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload?.error || payload?.detail || `HTTP ${res.status}`);
+    await loadImagineTabSsoStatus(true);
+    showToast('Imagine 每日用量已重置', 'success');
+  } catch (e) {
+    showToast(`重置失败: ${e?.message || e}`, 'error');
+  }
+}
+
+function buildImagineGenerateBody() {
+  const sizeMap = {
+    '1:1': '1024x1024',
+    '2:3': '1024x1536',
+    '3:2': '1536x1024',
+  };
+  const ratio = String(q('imagine-tab-aspect')?.value || '2:3').trim();
+  const n = Math.max(1, Math.min(4, Math.floor(Number(q('imagine-tab-count')?.value || 4) || 4)));
+  const stream = Boolean(q('imagine-tab-stream')?.checked);
+  return {
+    prompt: String(q('imagine-tab-prompt')?.value || '').trim(),
+    size: sizeMap[ratio] || '1024x1536',
+    n,
+    stream,
+  };
+}
+
+async function handleImagineGeneratedUrls(urls) {
+  if (!Array.isArray(urls) || !urls.length) return;
+  urls.forEach((src) => addWorkflowImage(src, 'imagine-generate'));
+  if (!workflowState.selectedImage) {
+    setWorkflowSelection(urls[0], 'imagine-generate', true);
+  } else {
+    saveWorkflowState();
+    renderWorkflowState();
+  }
+}
+
+async function generateImagineTabNonStream(body, headers) {
+  const res = await fetch('/api/v1/imagine/generate', {
+    method: 'POST',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...body, stream: false }),
+  });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(payload?.error || payload?.detail || `HTTP ${res.status}`);
+  }
+  const urls = extractImagineImageUrls(payload);
+  if (!urls.length) throw new Error('未返回有效图片');
+  await handleImagineGeneratedUrls(urls);
+}
+
+async function generateImagineTabStream(body, headers) {
+  const res = await fetch('/api/v1/imagine/generate', {
+    method: 'POST',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...body, stream: true }),
+  });
+  if (!res.ok || !res.body) {
+    const t = await res.text().catch(() => '');
+    throw new Error(`HTTP ${res.status}: ${t.slice(0, 200)}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let completedUrls = [];
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const raw of lines) {
+      const line = String(raw || '').trim();
+      if (!line.startsWith('data:')) continue;
+      const payload = line.slice(5).trim();
+      if (!payload || payload === '[DONE]') continue;
+      let evt = null;
+      try {
+        evt = JSON.parse(payload);
+      } catch (e) {
+        continue;
+      }
+      const evtType = String(evt?.event || '').trim();
+      if (evtType === 'progress') {
+        const stageRaw = String(evt?.stage || '').trim();
+        const stage = stageRaw === 'final' ? '完成阶段' : stageRaw === 'medium' ? '生成中' : '预览中';
+        const pct = stageRaw === 'final' ? 90 : stageRaw === 'medium' ? 60 : 30;
+        const status = evt?.image_id ? `图片: ${String(evt.image_id).slice(0, 8)}...` : '';
+        setImagineTabProgress(true, pct, stage, status);
+      } else if (evtType === 'complete') {
+        completedUrls = extractImagineImageUrls(evt);
+        setImagineTabProgress(true, 100, '完成', '');
+      } else if (evtType === 'error') {
+        throw new Error(evt?.message || evt?.error || '未知错误');
+      }
+    }
+  }
+
+  if (!completedUrls.length) throw new Error('未返回有效图片');
+  await handleImagineGeneratedUrls(completedUrls);
+}
+
+async function generateImagineTab() {
+  if (imagineTabGenerating) return showToast('任务进行中，请稍候', 'warning');
+  const headers = buildApiHeaders();
+  if (!headers.Authorization) return showToast('请先填写 API Key', 'warning');
+
+  const body = buildImagineGenerateBody();
+  if (!body.prompt) return showToast('请输入 Imagine prompt', 'warning');
+
+  setImagineTabGeneratingState(true);
+  setImagineTabProgress(true, 5, '准备中...', '');
+  try {
+    if (body.stream) {
+      await generateImagineTabStream(body, headers);
+    } else {
+      await generateImagineTabNonStream(body, headers);
+      setImagineTabProgress(true, 100, '完成', '');
+    }
+    await refreshImagineTabData(true);
+    showToast('Imagine 生成完成', 'success');
+  } catch (e) {
+    setImagineTabProgress(true, 100, '失败', e?.message || String(e));
+    showToast(`Imagine 生成失败: ${e?.message || e}`, 'error');
+  } finally {
+    setImagineTabGeneratingState(false);
+    setTimeout(() => setImagineTabProgress(false, 0, '', ''), 2500);
+  }
+}
+
 function buildWorkflowActionRow(src, origin) {
   const row = document.createElement('div');
   row.className = 'workflow-inline-actions';
@@ -772,9 +1112,15 @@ function attachWorkflowActions(container, src, origin) {
 }
 
 async function ensureParentPostIdForSelection(force = false, silent = false) {
-  const selected = String(workflowState.selectedImage || '').trim();
-  if (!selected) return '';
+  const selectedRaw = String(workflowState.selectedImage || '').trim();
+  if (!selectedRaw) return '';
+  const selected = toAbsoluteUrl(normalizeImagineGalleryUrl(selectedRaw, ''));
   if (!getUserApiKey()) return '';
+
+  if (selected && selected !== selectedRaw) {
+    workflowState.selectedImage = selected;
+    saveWorkflowState();
+  }
 
   const item = findWorkflowItemBySrc(selected);
   if (!force && item?.parentPostId) {
@@ -1474,7 +1820,7 @@ function switchTab(tab) {
     q(`tab-${t}`).classList.toggle('active', t === tab);
     q(`panel-${t}`).classList.toggle('hidden', t !== tab);
   });
-  if (tab === 'imagine') ensureImagineWorkspaceLoaded(false);
+  if (tab === 'imagine') refreshImagineTabData(true);
   refreshModels();
   if (tab === 'image') refreshImageGenerationMethod();
   renderWorkflowState();
@@ -2000,7 +2346,8 @@ async function generateVideo() {
       if (workflowState.parentPostId) {
         videoConfig.parent_post_id = workflowState.parentPostId;
       } else if (workflowState.selectedImage) {
-        imgUrls = [workflowState.selectedImage];
+        const normalized = toAbsoluteUrl(normalizeImagineGalleryUrl(workflowState.selectedImage, ''));
+        imgUrls = [normalized || workflowState.selectedImage];
       }
     }
 

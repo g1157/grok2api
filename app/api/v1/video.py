@@ -68,6 +68,10 @@ def _normalize_asset_url(raw: str) -> str:
         return f"{ASSET_HOST}/{suffix.lstrip('/')}"
 
     if parsed_path.startswith("/") and not parsed_path.startswith("/v1/files/"):
+        # Local API/admin paths are not assets.grok.com direct paths.
+        # They must be fetched and uploaded first.
+        if parsed_path.startswith("/api/") or parsed_path.startswith("/admin/"):
+            return ""
         return f"{ASSET_HOST}{parsed_path}"
 
     return ""

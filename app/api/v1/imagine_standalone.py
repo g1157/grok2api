@@ -85,7 +85,7 @@ async def _stream_generate(client, pool, token, prompt, aspect_ratio, response_f
                 if response_format == "b64_json":
                     final_data.append({"b64_json": r.b64})
                 else:
-                    final_data.append({"url": r.url or f"/api/v1/imagine/gallery/{Path(r.filepath).name}"})
+                    final_data.append({"url": r.url or f"/api/v1/imagine/gallery/file/{Path(r.filepath).name}"})
             await queue.put(("complete", {"created": int(time.time()), "data": final_data}))
         except Exception as e:
             pool.mark_failed(token)
@@ -141,7 +141,7 @@ async def gallery_list():
                     "filename": f.name,
                     "size": f.stat().st_size,
                     "created": f.stat().st_mtime,
-                    "url": f"/api/v1/imagine/gallery/{f.name}",
+                    "url": f"/api/v1/imagine/gallery/file/{f.name}",
                 })
     return {"images": files, "total": len(files)}
 

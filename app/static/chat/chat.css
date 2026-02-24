@@ -344,30 +344,81 @@
   gap: 10px;
 }
 
-.imagine-tab-shell {
+.imagine-tab-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  min-height: 20px;
+  border-radius: 9999px;
+  font-size: 11px;
+}
+
+.badge-green {
+  background: #ecfdf5;
+  color: #059669;
+}
+
+.badge-red {
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+.imagine-tab-card {
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 10px;
+  overflow: hidden;
   background: #fff;
+  display: flex;
+  flex-direction: column;
+}
+
+.imagine-tab-card.is-active {
+  border-color: #000;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+
+.imagine-tab-card img {
+  width: 100%;
+  height: 180px;
+  object-fit: cover;
+  display: block;
+}
+
+.imagine-tab-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  padding: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.imagine-tab-actions button {
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  background: #fff;
+}
+
+.imagine-progress-track {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.08);
   overflow: hidden;
 }
 
-.imagine-tab-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border);
-  background: linear-gradient(180deg, #fff, #fafafa);
-  flex-wrap: wrap;
-}
-
-.imagine-workspace-frame {
-  width: 100%;
-  min-height: 920px;
-  border: none;
-  display: block;
-  background: #fff;
+.imagine-progress-fill {
+  height: 100%;
+  width: 0;
+  background: #111;
+  transition: width 0.2s ease;
 }
 
 .video-workflow-meta {
@@ -625,8 +676,8 @@
     flex-direction: column;
   }
 
-  .imagine-workspace-frame {
-    min-height: 860px;
+  .imagine-tab-gallery {
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   }
 
   .video-workflow .workflow-preview.workflow-preview-large {
@@ -708,8 +759,8 @@
     align-items: stretch;
   }
 
-  .imagine-workspace-frame {
-    min-height: 760px;
+  .imagine-tab-gallery {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .workflow-selected {

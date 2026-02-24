@@ -46,21 +46,21 @@ function getImagineStatusForToken(token) {
 function getImagineHealthMeta(item) {
   const status = getImagineStatusForToken(item?.token);
   if (!status) {
-    return { label: '未接入', className: 'badge-gray', availableText: '-' };
+    return { label: '未接入', className: 'badge-gray' };
   }
 
   const failCount = Number(status.fail_count || 0);
   const available = Boolean(status.available);
   if (!available && failCount >= 5) {
-    return { label: '异常', className: 'badge-red', availableText: '不可用' };
+    return { label: '异常', className: 'badge-red' };
   }
   if (!available) {
-    return { label: '限流', className: 'badge-orange', availableText: '不可用' };
+    return { label: '限流', className: 'badge-orange' };
   }
   if (failCount > 0) {
-    return { label: '告警', className: 'badge-orange', availableText: '可用' };
+    return { label: '告警', className: 'badge-orange' };
   }
-  return { label: '正常', className: 'badge-green', availableText: '可用' };
+  return { label: '正常', className: 'badge-green' };
 }
 
 function updateImagineStatCards() {
@@ -70,44 +70,6 @@ function updateImagineStatCards() {
   };
   setText('stat-imagine-total', Number(imaginePoolStatus.total || 0).toLocaleString());
   setText('stat-imagine-available', Number(imaginePoolStatus.available || 0).toLocaleString());
-}
-
-function renderImagineMonitorTable() {
-  const tbody = document.getElementById('imagine-monitor-body');
-  if (!tbody) return;
-  const tokens = Array.isArray(imaginePoolStatus.tokens) ? imaginePoolStatus.tokens : [];
-  if (!tokens.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-[var(--accents-4)] py-4">暂无 Imagine Token 数据</td></tr>';
-    return;
-  }
-
-  tbody.innerHTML = tokens.map((t) => {
-    const token = escapeHtml(String(t.token || '***'));
-    const daily = Number(t.daily_count || 0);
-    const dailyLimit = Number(t.daily_limit || 0);
-    const remain = Math.max(0, dailyLimit - daily);
-    const failCount = Number(t.fail_count || 0);
-    const available = Boolean(t.available);
-    let healthClass = 'badge-green';
-    let healthText = '正常';
-    if (!available && failCount >= 5) {
-      healthClass = 'badge-red';
-      healthText = '异常';
-    } else if (!available || failCount > 0) {
-      healthClass = 'badge-orange';
-      healthText = '告警';
-    }
-    return `
-      <tr>
-        <td class="text-left font-mono text-xs">${token}</td>
-        <td>${daily}</td>
-        <td>${remain}</td>
-        <td>${failCount}</td>
-        <td>${available ? '可用' : '不可用'}</td>
-        <td><span class="badge ${healthClass}">${healthText}</span></td>
-      </tr>
-    `;
-  }).join('');
 }
 
 async function loadImagineStatus(silent = true, rerenderTokenTable = false) {
@@ -142,7 +104,6 @@ async function loadImagineStatus(silent = true, rerenderTokenTable = false) {
     });
     imagineStatusByMasked = nextMap;
     updateImagineStatCards();
-    renderImagineMonitorTable();
     if (rerenderTokenTable) {
       renderTable();
     }

@@ -10,7 +10,7 @@
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-sans/style.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-mono/style.css" rel="stylesheet">
   <link href="/static/common/common.css?v=3" rel="stylesheet">
-  <link href="/static/token/token.css?v=13" rel="stylesheet">
+  <link href="/static/token/token.css?v=14" rel="stylesheet">
   <link href="/static/common/toast.css" rel="stylesheet">
 </head>
 
@@ -46,6 +46,12 @@
               <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
             </svg>
             一键刷新 NSFW
+          </button>
+          <button onclick="refreshImagineMonitor()" class="geist-button-outline text-xs px-3">
+            Imagine状态
+          </button>
+          <button onclick="reloadImagineSso()" class="geist-button-outline text-xs px-3">
+            重载Imagine
           </button>
           <button onclick="addToken()" class="geist-button gap-2">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -161,39 +167,6 @@
         <div id="loading" class="text-center py-12 text-[var(--accents-4)]">加载中...</div>
         <div id="empty-state" class="hidden text-center py-12 text-[var(--accents-4)]">
           暂无 Token，请点击右上角导入或添加。
-        </div>
-      </div>
-
-      <div class="imagine-monitor-box">
-        <div class="flex flex-wrap justify-between items-start gap-3 mb-3">
-          <div>
-            <h3 class="text-lg font-semibold tracking-tight">Imagine 监控</h3>
-            <p class="text-[var(--accents-4)] mt-1 text-sm">显示 Imagine SSO 池可用性与用量，并同步到上方 Token 列表健康列。</p>
-          </div>
-          <div class="flex items-center gap-2 flex-wrap">
-            <button onclick="refreshImagineMonitor()" class="geist-button-outline text-xs px-3">刷新状态</button>
-            <button onclick="reloadImagineSso()" class="geist-button-outline text-xs px-3">重新加载 SSO</button>
-            <button onclick="resetImagineDailyUsage()" class="geist-button-outline text-xs px-3">重置用量</button>
-          </div>
-        </div>
-        <div class="overflow-x-auto">
-          <table class="geist-table min-w-[680px]">
-            <thead>
-              <tr>
-                <th class="text-left">Token</th>
-                <th>今日用量</th>
-                <th>剩余</th>
-                <th>失败次数</th>
-                <th>可用</th>
-                <th>健康</th>
-              </tr>
-            </thead>
-            <tbody id="imagine-monitor-body">
-              <tr>
-                <td colspan="6" class="text-center text-[var(--accents-4)] py-4">加载中...</td>
-              </tr>
-            </tbody>
-          </table>
         </div>
       </div>
 
@@ -404,7 +377,7 @@
   <script src="/static/common/header.js?v=4"></script>
   <script src="/static/common/footer.js?v=1"></script>
   <script src="/static/common/toast.js"></script>
-  <script src="/static/token/token.js?v=16"></script>
+  <script src="/static/token/token.js?v=17"></script>
 </body>
 
 </html>

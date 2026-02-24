@@ -11,7 +11,7 @@
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-mono/style.css" rel="stylesheet">
   <link href="/static/common/common.css?v=3" rel="stylesheet">
   <link href="/static/common/toast.css" rel="stylesheet">
-  <link href="/static/imagine/imagine.css?v=4" rel="stylesheet">
+  <link href="/static/imagine/imagine.css?v=5" rel="stylesheet">
 </head>
 
 <body class="min-h-screen flex flex-col" style="background-color: var(--bg);">
@@ -175,7 +175,8 @@
 
   <!-- Lightbox -->
   <div id="lightbox" class="modal-overlay hidden" onclick="closeLightbox(event)">
-    <div class="flex items-center justify-center w-full h-full p-4">
+    <div class="imagine-lightbox-frame">
+      <button id="lightbox-close" type="button" class="imagine-lightbox-close" onclick="closeLightbox(event)" aria-label="关闭预览">×</button>
       <img id="lightbox-img" src="" alt="" class="max-w-full max-h-[90vh] rounded-lg shadow-2xl">
     </div>
   </div>
@@ -185,7 +186,7 @@
   <script src="/static/common/header.js?v=4"></script>
   <script src="/static/common/footer.js?v=1"></script>
   <script src="/static/common/toast.js"></script>
-  <script src="/static/imagine/imagine.js?v=4"></script>
+  <script src="/static/imagine/imagine.js?v=5"></script>
 </body>
 
 </html>

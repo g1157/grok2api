@@ -20,6 +20,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   applyEmbeddedMode();
   apiKey = await ensureApiKey();
   if (!apiKey) return;
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeLightbox();
+  });
   loadWorkflowState();
   renderWorkflowState();
   loadSsoStatus();
@@ -404,11 +407,18 @@ function openLightbox(url) {
 }
 
 function closeLightbox(e) {
-  if (e.target === e.currentTarget || e.target.id === 'lightbox') {
-    const overlay = document.getElementById('lightbox');
-    overlay.classList.remove('is-open');
-    overlay.classList.add('hidden');
+  if (e) {
+    const shouldClose =
+      e.target === e.currentTarget
+      || e.target.id === 'lightbox'
+      || e.target.id === 'lightbox-close';
+    if (!shouldClose) return;
   }
+  const overlay = document.getElementById('lightbox');
+  const image = document.getElementById('lightbox-img');
+  overlay.classList.remove('is-open');
+  overlay.classList.add('hidden');
+  if (image) image.removeAttribute('src');
 }
 
 // ---------- Generation ----------

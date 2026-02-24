@@ -10,7 +10,7 @@
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-sans/style.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-mono/style.css" rel="stylesheet">
   <link href="/static/common/common.css?v=3" rel="stylesheet">
-  <link href="/static/chat/chat.css?v=8" rel="stylesheet">
+  <link href="/static/chat/chat.css?v=9" rel="stylesheet">
   <link href="/static/common/toast.css" rel="stylesheet">
   <script>
     window.__CHAT_ADMIN__ = true;
@@ -54,7 +54,7 @@
         <button id="tab-video" class="tab" onclick="switchTab('video')">生成视频</button>
       </div>
 
-      <div class="workflow-board">
+      <div id="workflow-board" class="workflow-board">
         <div class="workflow-head">
           <div class="workflow-selected">
             <div id="workflow-selected-preview" class="workflow-preview"></div>
@@ -111,9 +111,9 @@
           <div class="col-span-6 md:col-span-2">
             <label class="field-label">数量</label>
             <select id="imagine-tab-count" class="geist-input h-[34px]">
-              <option value="1">1</option>
+              <option value="1" selected>1</option>
               <option value="2">2</option>
-              <option value="4" selected>4</option>
+              <option value="4">4</option>
             </select>
           </div>
           <div class="col-span-6 md:col-span-1 flex items-center gap-2">
@@ -122,7 +122,6 @@
           </div>
           <div class="col-span-12 md:col-span-3 flex justify-end gap-2 flex-wrap">
             <button class="geist-button text-xs px-4" id="imagine-tab-generate-btn" onclick="generateImagineTab()">生成</button>
-            <button class="geist-button-outline text-xs px-3" onclick="refreshImagineTabData(false)">刷新图库</button>
           </div>
         </div>
         <div id="imagine-tab-progress" class="hidden mt-3">
@@ -132,15 +131,6 @@
           </div>
           <div class="imagine-progress-track">
             <div id="imagine-tab-progress-bar" class="imagine-progress-fill" style="width: 0%"></div>
-          </div>
-        </div>
-        <div class="mt-4">
-          <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
-            <div class="text-sm font-semibold tracking-tight">Imagine 图片库</div>
-            <button class="geist-button-outline text-xs px-3" onclick="clearImagineTabGallery()">清空图片库</button>
-          </div>
-          <div id="imagine-tab-gallery" class="imagine-tab-gallery">
-            <div class="workflow-empty">暂无图片</div>
           </div>
         </div>
       </div>
@@ -311,13 +301,20 @@
     </div>
   </main>
 
+  <div id="imagine-preview-modal" class="modal-overlay hidden" onclick="closeImaginePreview(event)">
+    <div class="imagine-preview-frame">
+      <button id="imagine-preview-close" type="button" class="imagine-preview-close" onclick="closeImaginePreview(event)" aria-label="关闭预览">×</button>
+      <img id="imagine-preview-image" src="" alt="imagine-preview" class="imagine-preview-image">
+    </div>
+  </div>
+
   <div id="app-footer"></div>
 
   <script src="/static/common/toast.js"></script>
   <script src="/static/common/admin-auth.js"></script>
   <script src="/static/common/header.js?v=4"></script>
   <script src="/static/common/footer.js"></script>
-  <script src="/static/chat/chat.js?v=11"></script>
+  <script src="/static/chat/chat.js?v=12"></script>
 </body>
 
 </html>

@@ -225,6 +225,43 @@ async function getKvStats(db: Env["DB"]): Promise<{
   };
 }
 
+function stripImaginePrefix(name: string): string {
+  return name.startsWith("imagine:") ? name.slice("imagine:".length) : name;
+}
+
+function toStatsSizeMb(sizeBytes: number): number {
+  return Math.round((sizeBytes / (1024 * 1024)) * 10) / 10;
+}
+
+async function getImagineStats(env: Env): Promise<{ count: number; size_bytes: number; size_mb: number }> {
+  const gallery = await listImagineGallery(env);
+  let sizeBytes = 0;
+  for (const item of gallery) {
+    // Imagine KV stores lightweight JSON metadata, not image binary.
+    sizeBytes += new TextEncoder().encode(JSON.stringify({ url: item.url, created: item.created })).byteLength;
+  }
+  return { count: gallery.length, size_bytes: sizeBytes, size_mb: toStatsSizeMb(sizeBytes) };
+}
+
+function mapImagineGalleryToCacheItems(
+  items: { name: string; url: string; created: number }[],
+): Array<{ name: string; size_bytes: number; mtime_ms: number; preview_url: string }> {
+  return items
+    .map((it) => {
+      const name = stripImaginePrefix(it.name);
+      const rawUrl = String(it.url ?? "").trim();
+      const previewUrl = rawUrl ? `/images/${encodeURIComponent(encodeAssetPath(rawUrl))}` : "";
+      const sizeBytes = new TextEncoder().encode(JSON.stringify({ url: rawUrl, created: it.created })).byteLength;
+      return {
+        name,
+        size_bytes: sizeBytes,
+        mtime_ms: Number(it.created) || 0,
+        preview_url: previewUrl,
+      };
+    })
+    .sort((a, b) => b.mtime_ms - a.mtime_ms);
+}
+
 adminRoutes.post("/api/v1/admin/login", async (c) => {
   try {
     const body = (await c.req.json()) as { username?: string; password?: string };
@@ -771,7 +808,8 @@ adminRoutes.post("/api/v1/admin/tokens/refresh", requireAdminAuth, async (c) => 
 adminRoutes.get("/api/v1/admin/cache/local", requireAdminAuth, async (c) => {
   try {
     const stats = await getKvStats(c.env.DB);
-    return c.json({ local_image: stats.image, local_video: stats.video });
+    const imagine = await getImagineStats(c.env);
+    return c.json({ local_image: stats.image, local_video: stats.video, local_imagine: imagine });
   } catch (e) {
     return c.json(legacyErr(`Get cache stats failed: ${e instanceof Error ? e.message : String(e)}`), 500);
   }
@@ -780,9 +818,11 @@ adminRoutes.get("/api/v1/admin/cache/local", requireAdminAuth, async (c) => {
 adminRoutes.get("/api/v1/admin/cache", requireAdminAuth, async (c) => {
   try {
     const stats = await getKvStats(c.env.DB);
+    const imagine = await getImagineStats(c.env);
     return c.json({
       local_image: stats.image,
       local_video: stats.video,
+      local_imagine: imagine,
       online: { count: 0, status: "not_loaded", token: null, last_asset_clear_at: null },
       online_accounts: [],
       online_scope: "none",
@@ -797,8 +837,13 @@ adminRoutes.post("/api/v1/admin/cache/clear", requireAdminAuth, async (c) => {
   try {
     const body = (await c.req.json()) as any;
     const t = String(body?.type ?? "image").toLowerCase();
-    const type: CacheType = t === "video" ? "video" : "image";
-    const deleted = await clearKvCacheByType(c.env, type);
+    let deleted = 0;
+    if (t === "imagine") {
+      deleted = await clearImagineGallery(c.env);
+    } else {
+      const type: CacheType = t === "video" ? "video" : "image";
+      deleted = await clearKvCacheByType(c.env, type);
+    }
     return c.json(legacyOk({ result: { deleted } }));
   } catch (e) {
     return c.json(legacyErr(`Clear cache failed: ${e instanceof Error ? e.message : String(e)}`), 500);
@@ -808,11 +853,18 @@ adminRoutes.post("/api/v1/admin/cache/clear", requireAdminAuth, async (c) => {
 adminRoutes.get("/api/v1/admin/cache/list", requireAdminAuth, async (c) => {
   try {
     const t = String(c.req.query("type") ?? "image").toLowerCase();
-    const type: CacheType = t === "video" ? "video" : "image";
     const page = Math.max(1, Number(c.req.query("page") ?? 1));
     const pageSize = Math.max(1, Math.min(5000, Number(c.req.query("page_size") ?? 1000)));
     const offset = (page - 1) * pageSize;
 
+    if (t === "imagine") {
+      const gallery = await listImagineGallery(c.env);
+      const mapped = mapImagineGalleryToCacheItems(gallery);
+      const items = mapped.slice(offset, offset + pageSize);
+      return c.json(legacyOk({ total: mapped.length, page, page_size: pageSize, items }));
+    }
+
+    const type: CacheType = t === "video" ? "video" : "image";
     const { total, items } = await listCacheRowsByType(c.env.DB, type, pageSize, offset);
     const mapped = items.map((it) => {
       const name = it.key.startsWith(`${type}/`) ? it.key.slice(type.length + 1) : it.key;
@@ -834,9 +886,15 @@ adminRoutes.post("/api/v1/admin/cache/item/delete", requireAdminAuth, async (c) 
   try {
     const body = (await c.req.json()) as any;
     const t = String(body?.type ?? "image").toLowerCase();
-    const type: CacheType = t === "video" ? "video" : "image";
     const name = String(body?.name ?? "").trim();
     if (!name) return c.json(legacyErr("Missing file name"), 400);
+
+    if (t === "imagine") {
+      const deleted = await deleteImagineImage(c.env, name);
+      return c.json(legacyOk({ result: { deleted } }));
+    }
+
+    const type: CacheType = t === "video" ? "video" : "image";
     const key = name.startsWith(`${type}/`) ? name : `${type}/${name}`;
     await c.env.KV_CACHE.delete(key);
     await dbRun(c.env.DB, "DELETE FROM kv_cache WHERE key = ?", [key]);
@@ -1663,6 +1721,27 @@ adminRoutes.get("/api/v1/imagine/gallery", requireAdminOrApiAuth, async (c) => {
   try {
     const items = await listImagineGallery(c.env);
     return c.json({ success: true, data: items, total: items.length });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
+  }
+});
+
+adminRoutes.get("/api/v1/imagine/gallery/file/:filename", requireAdminOrApiAuth, async (c) => {
+  try {
+    const filename = String(c.req.param("filename") ?? "").trim();
+    if (!filename) return c.json({ error: "Missing filename" }, 400);
+    const key = filename.startsWith("imagine:") ? filename : `imagine:${filename}`;
+    const raw = await c.env.KV_CACHE.get(key);
+    if (!raw) return c.json({ error: "Not found" }, 404);
+    let url = "";
+    try {
+      const parsed = JSON.parse(raw) as { url?: string };
+      url = String(parsed?.url ?? "").trim();
+    } catch {
+      url = "";
+    }
+    if (!url) return c.json({ error: "Not found" }, 404);
+    return c.redirect(`/images/${encodeURIComponent(encodeAssetPath(url))}`, 302);
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
   }

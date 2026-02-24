@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Env } from "../env";
 import { getSettings, normalizeCfCookie } from "../settings";
-import { applyCooldown, recordTokenFailure, selectBestToken } from "../repo/tokens";
+import { applyCooldown, listTokens, recordTokenFailure, selectBestToken } from "../repo/tokens";
 import { getDynamicHeaders } from "../grok/headers";
 import { deleteCacheRow, touchCacheRow, upsertCacheRow, type CacheType } from "../repo/cache";
 import { nowMs } from "../utils/time";
@@ -20,6 +20,21 @@ function detectTypeByPath(path: string): CacheType {
   if (lower.endsWith(".mp4") || lower.endsWith(".webm") || lower.endsWith(".mov") || lower.endsWith(".avi"))
     return "video";
   return "image";
+}
+
+function detectMimeByPath(path: string, type: CacheType): string {
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".mp4")) return "video/mp4";
+  if (lower.endsWith(".webm")) return "video/webm";
+  if (lower.endsWith(".mov")) return "video/quicktime";
+  if (lower.endsWith(".m4v")) return "video/mp4";
+  if (lower.endsWith(".avi")) return "video/x-msvideo";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".gif")) return "image/gif";
+  if (lower.endsWith(".bmp")) return "image/bmp";
+  return type === "video" ? "video/mp4" : "application/octet-stream";
 }
 
 function r2Key(type: CacheType, imgPath: string): string {
@@ -126,17 +141,22 @@ function responseFromBytes(args: {
   return new Response(args.bytes, { status: 200, headers });
 }
 
-function toUpstreamHeaders(args: { pathname: string; cookie: string; settings: Awaited<ReturnType<typeof getSettings>>["grok"] }): Record<string, string> {
+function toUpstreamHeaders(args: {
+  pathname: string;
+  cookie: string;
+  settings: Awaited<ReturnType<typeof getSettings>>["grok"];
+  type: CacheType;
+}): Record<string, string> {
   const headers = getDynamicHeaders(args.settings, args.pathname);
   headers.Cookie = args.cookie;
   delete headers["Content-Type"];
-  headers.Accept =
-    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8";
-  headers["Sec-Fetch-Dest"] = "document";
-  headers["Sec-Fetch-Mode"] = "navigate";
+  delete headers.Origin;
+  headers.Accept = args.type === "video" ? "video/*,*/*;q=0.8" : "image/avif,image/webp,image/apng,image/*,*/*;q=0.8";
+  headers["Sec-Fetch-Dest"] = args.type === "video" ? "video" : "image";
+  headers["Sec-Fetch-Mode"] = "no-cors";
   headers["Sec-Fetch-Site"] = "same-site";
-  headers["Sec-Fetch-User"] = "?1";
-  headers["Upgrade-Insecure-Requests"] = "1";
+  delete headers["Sec-Fetch-User"];
+  delete headers["Upgrade-Insecure-Requests"];
   headers.Referer = "https://grok.com/";
   return headers;
 }
@@ -199,7 +219,7 @@ mediaRoutes.get("/images/:imgPath{.+}", async (c) => {
   });
   if (cached?.value) {
     c.executionCtx.waitUntil(touchCacheRow(c.env.DB, key, nowMs()));
-    const contentType = (cached.metadata?.contentType as string | undefined) ?? "application/octet-stream";
+    const contentType = (cached.metadata?.contentType as string | undefined) || detectMimeByPath(originalPath, type);
     return responseFromBytes({ bytes: cached.value, contentType, cacheSeconds, rangeHeader });
   }
 
@@ -211,21 +231,72 @@ mediaRoutes.get("/images/:imgPath{.+}", async (c) => {
   if (!chosen) return c.text("No available token", 503);
 
   const cf = normalizeCfCookie(settingsBundle.grok.cf_clearance ?? "");
-  const cookie = cf ? `sso-rw=${chosen.token};sso=${chosen.token};${cf}` : `sso-rw=${chosen.token};sso=${chosen.token}`;
-
-  const baseHeaders = toUpstreamHeaders({ pathname: originalPath, cookie, settings: settingsBundle.grok });
-
-  // Range requests: KV can't stream partial content efficiently; proxy from upstream.
-  // (If the object is cached and within KV limits, we do support Range by slicing bytes above.)
-  const upstream = await fetch(url.toString(), { headers: rangeHeader ? { ...baseHeaders, Range: rangeHeader } : baseHeaders });
-  if (!upstream.ok || !upstream.body) {
-    const txt = await upstream.text().catch(() => "");
-    await recordTokenFailure(c.env.DB, chosen.token, upstream.status, txt.slice(0, 200));
-    await applyCooldown(c.env.DB, chosen.token, upstream.status);
-    return new Response(`Upstream ${upstream.status}`, { status: upstream.status });
+  const now = nowMs();
+  const rows = await listTokens(c.env.DB);
+  const tokenCandidates: string[] = [];
+  const pushCandidate = (token: string) => {
+    const t = String(token || "").trim();
+    if (!t || tokenCandidates.includes(t)) return;
+    tokenCandidates.push(t);
+  };
+  pushCandidate(chosen.token);
+  for (const row of rows) {
+    if (row.status === "expired") continue;
+    if (row.failed_count >= 3) continue;
+    if (row.cooldown_until && row.cooldown_until > now) continue;
+    if (row.remaining_queries === 0) continue;
+    pushCandidate(row.token);
+    if (tokenCandidates.length >= 6) break;
   }
 
-  const contentType = upstream.headers.get("content-type") ?? "";
+  let upstream: Response | null = null;
+  let lastStatus = 502;
+  let lastError = "";
+
+  for (const candidate of tokenCandidates) {
+    const cookie = cf ? `sso-rw=${candidate};sso=${candidate};${cf}` : `sso-rw=${candidate};sso=${candidate}`;
+    const baseHeaders = toUpstreamHeaders({ pathname: originalPath, cookie, settings: settingsBundle.grok, type });
+    try {
+      const resp = await fetch(url.toString(), {
+        headers: rangeHeader ? { ...baseHeaders, Range: rangeHeader } : baseHeaders,
+      });
+
+      if (resp.ok && resp.body) {
+        const ct = String(resp.headers.get("content-type") || "").toLowerCase();
+        if (ct.includes("text/html")) {
+          lastStatus = 403;
+          lastError = (await resp.text().catch(() => "")).slice(0, 200);
+          continue;
+        }
+        upstream = resp;
+        break;
+      }
+
+      const txt = await resp.text().catch(() => "");
+      lastStatus = resp.status || 502;
+      lastError = txt.slice(0, 200);
+
+      // 403 frequently means asset-account mismatch; retry with another token.
+      if (resp.status === 401 || resp.status === 403) continue;
+      if (resp.status === 404) break;
+
+      await recordTokenFailure(c.env.DB, candidate, resp.status, lastError);
+      await applyCooldown(c.env.DB, candidate, resp.status);
+
+      if (resp.status === 429 || resp.status >= 500) continue;
+      break;
+    } catch (e) {
+      lastStatus = 502;
+      lastError = String(e instanceof Error ? e.message : e).slice(0, 200);
+      continue;
+    }
+  }
+
+  if (!upstream || !upstream.body) {
+    return new Response(`Upstream ${lastStatus}${lastError ? `: ${lastError}` : ""}`, { status: lastStatus });
+  }
+
+  const contentType = upstream.headers.get("content-type") ?? detectMimeByPath(originalPath, type);
   const contentLengthHeader = upstream.headers.get("content-length") ?? "";
   const contentLength = contentLengthHeader ? Number(contentLengthHeader) : NaN;
   const maxBytes = Math.min(25 * 1024 * 1024, Math.max(1, parseIntSafe(c.env.KV_CACHE_MAX_BYTES, 25 * 1024 * 1024)));

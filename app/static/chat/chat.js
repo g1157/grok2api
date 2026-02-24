@@ -37,9 +37,53 @@ let workflowCapabilities = {
   videoStitchEnabled: true,
 };
 let imagineAdminSessionAuth = '';
+let imaginePreviewBound = false;
 
 function q(id) {
   return document.getElementById(id);
+}
+
+function openImaginePreview(rawSrc) {
+  const src = toAbsoluteUrl(rawSrc);
+  if (!src) return;
+  const modal = q('imagine-preview-modal');
+  const image = q('imagine-preview-image');
+  if (!modal || !image) return;
+  image.src = src;
+  modal.classList.remove('hidden');
+  modal.classList.add('is-open');
+}
+
+function closeImaginePreview(event) {
+  if (event) {
+    const target = event.target;
+    const shouldClose =
+      target === event.currentTarget
+      || target?.id === 'imagine-preview-modal'
+      || target?.id === 'imagine-preview-close';
+    if (!shouldClose) return;
+  }
+  const modal = q('imagine-preview-modal');
+  const image = q('imagine-preview-image');
+  if (!modal || !image) return;
+  modal.classList.remove('is-open');
+  modal.classList.add('hidden');
+  image.removeAttribute('src');
+}
+
+function bindImaginePreview() {
+  if (imaginePreviewBound) return;
+  imaginePreviewBound = true;
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeImaginePreview();
+  });
+}
+
+function updateWorkflowBoardVisibility(tab = currentTab) {
+  const workflowBoard = q('workflow-board');
+  if (workflowBoard) {
+    workflowBoard.classList.toggle('hidden', tab === 'chat');
+  }
 }
 
 function isAdminChat() {
@@ -526,6 +570,8 @@ async function init() {
   await refreshImageGenerationMethod();
   await detectWorkflowCapabilities();
   renderWorkflowState();
+  updateWorkflowBoardVisibility(currentTab);
+  bindImaginePreview();
   refreshImagineTabData(true);
 
   chatMessages = [];
@@ -986,7 +1032,7 @@ async function loadImagineTabGallery(silent = true) {
             const active = workflowState.selectedImage && toAbsoluteUrl(workflowState.selectedImage) === src;
             return `
               <div class="imagine-tab-card${active ? ' is-active' : ''}">
-                <img alt="imagine-image" src="${escapeHtml(src)}" />
+                <img alt="imagine-image" src="${escapeHtml(src)}" onclick="openImaginePreview(decodeURIComponent('${encodedSrc}'))" />
                 <div class="imagine-tab-actions">
                   <button type="button" onclick="syncImagineTabImage(decodeURIComponent('${encodedSrc}'))">设为工作图</button>
                   <button type="button" onclick="deleteImagineTabImage(decodeURIComponent('${encodedName}'))">删除</button>
@@ -1083,7 +1129,7 @@ function buildImagineGenerateBody() {
     '3:2': '1536x1024',
   };
   const ratio = String(q('imagine-tab-aspect')?.value || '2:3').trim();
-  const n = Math.max(1, Math.min(4, Math.floor(Number(q('imagine-tab-count')?.value || 4) || 4)));
+  const n = Math.max(1, Math.min(4, Math.floor(Number(q('imagine-tab-count')?.value || 1) || 1)));
   const stream = Boolean(q('imagine-tab-stream')?.checked);
   return {
     prompt: String(q('imagine-tab-prompt')?.value || '').trim(),
@@ -1948,6 +1994,7 @@ function switchTab(tab) {
     q(`tab-${t}`).classList.toggle('active', t === tab);
     q(`panel-${t}`).classList.toggle('hidden', t !== tab);
   });
+  updateWorkflowBoardVisibility(tab);
   if (tab === 'imagine') refreshImagineTabData(true);
   refreshModels();
   if (tab === 'image') refreshImageGenerationMethod();

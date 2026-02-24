@@ -899,6 +899,15 @@ function renderLocalCacheList(type, items) {
 }
 
 function viewLocalFile(type, name) {
+  const state = cacheListState[type];
+  if (state && Array.isArray(state.items)) {
+    const item = state.items.find(entry => entry && entry.name === name);
+    const preview = item && typeof item.preview_url === 'string' ? item.preview_url.trim() : '';
+    if (preview) {
+      window.open(preview, '_blank');
+      return;
+    }
+  }
   const safeName = encodeURIComponent(name);
   let url = `/v1/files/video/${safeName}`;
   if (type === 'image') url = `/v1/files/image/${safeName}`;

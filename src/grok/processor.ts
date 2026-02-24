@@ -168,10 +168,35 @@ export function createOpenAiStreamFromGrokNdjson(
       let thinkingFinished = false;
       let videoProgressStarted = false;
       let lastVideoProgress = -1;
+      let pendingVideo:
+        | {
+            src: string;
+            poster?: string;
+            progress: number;
+          }
+        | null = null;
+      let videoHtmlEmitted = false;
 
       let buffer = "";
 
       const flushStop = () => {
+        if (!videoHtmlEmitted && pendingVideo?.src) {
+          controller.enqueue(
+            encoder.encode(
+              makeChunk(
+                id,
+                created,
+                currentModel,
+                buildVideoHtml({
+                  videoUrl: pendingVideo.src,
+                  posterPreview: settings.video_poster_preview === true,
+                  ...(pendingVideo.poster ? { posterUrl: pendingVideo.poster } : {}),
+                }),
+              ),
+            ),
+          );
+          videoHtmlEmitted = true;
+        }
         controller.enqueue(encoder.encode(makeChunk(id, created, currentModel, "", "stop")));
         controller.enqueue(encoder.encode(makeDone()));
       };
@@ -286,20 +311,25 @@ export function createOpenAiStreamFromGrokNdjson(
                   poster = toImgProxyUrl(global, origin, thumbPath);
                 }
 
-                controller.enqueue(
-                  encoder.encode(
-                    makeChunk(
-                      id,
-                      created,
-                      currentModel,
-                      buildVideoHtml({
-                        videoUrl: src,
-                        posterPreview: settings.video_poster_preview === true,
-                        ...(poster ? { posterUrl: poster } : {}),
-                      }),
+                pendingVideo = { src, progress, ...(poster ? { poster } : {}) };
+                // Emit one finalized video URL only; intermediate URLs may be unplayable.
+                if (!videoHtmlEmitted && progress >= 100) {
+                  controller.enqueue(
+                    encoder.encode(
+                      makeChunk(
+                        id,
+                        created,
+                        currentModel,
+                        buildVideoHtml({
+                          videoUrl: src,
+                          posterPreview: settings.video_poster_preview === true,
+                          ...(poster ? { posterUrl: poster } : {}),
+                        }),
+                      ),
                     ),
-                  ),
-                );
+                  );
+                  videoHtmlEmitted = true;
+                }
               }
               continue;
             }
@@ -417,6 +447,13 @@ export async function parseOpenAiFromGrokNdjson(
 
   let content = "";
   let model = requestedModel;
+  let bestVideo:
+    | {
+        src: string;
+        poster?: string;
+        progress: number;
+      }
+    | null = null;
   for (const line of lines) {
     let data: GrokNdjson;
     try {
@@ -435,6 +472,7 @@ export async function parseOpenAiFromGrokNdjson(
     if (videoResp?.videoUrl && typeof videoResp.videoUrl === "string") {
       const videoPath = encodeAssetPath(videoResp.videoUrl);
       const src = toImgProxyUrl(global, origin, videoPath);
+      const progress = typeof videoResp.progress === "number" ? videoResp.progress : -1;
 
       let poster: string | undefined;
       if (typeof videoResp.thumbnailImageUrl === "string" && videoResp.thumbnailImageUrl) {
@@ -442,13 +480,11 @@ export async function parseOpenAiFromGrokNdjson(
         poster = toImgProxyUrl(global, origin, thumbPath);
       }
 
-      content = buildVideoHtml({
-        videoUrl: src,
-        posterPreview: settings.video_poster_preview === true,
-        ...(poster ? { posterUrl: poster } : {}),
-      });
+      if (!bestVideo || progress >= bestVideo.progress) {
+        bestVideo = { src, progress, ...(poster ? { poster } : {}) };
+      }
       model = requestedModel;
-      break;
+      continue;
     }
 
     const modelResp = grok.modelResponse;
@@ -474,6 +510,15 @@ export async function parseOpenAiFromGrokNdjson(
 
     // For normal chat replies, the first modelResponse is enough.
     break;
+  }
+
+  if (bestVideo?.src) {
+    content = buildVideoHtml({
+      videoUrl: bestVideo.src,
+      posterPreview: settings.video_poster_preview === true,
+      ...(bestVideo.poster ? { posterUrl: bestVideo.poster } : {}),
+    });
+    model = requestedModel;
   }
 
   return {

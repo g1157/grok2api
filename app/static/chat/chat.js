@@ -1350,6 +1350,14 @@ async function refreshWorkflowNsfw() {
   }
 }
 
+function isLikelyVideoAssetUrl(url) {
+  const value = String(url || '').trim().toLowerCase();
+  if (!value) return false;
+  if (value.includes('/images/')) return true;
+  if (value.includes('/v1/files/video/')) return true;
+  return /\.(mp4|webm|mov|m4v|avi)(?:$|[?#])/i.test(value);
+}
+
 function extractVideoUrlsFromContent(content) {
   const urls = [];
   const pushUrl = (raw) => {
@@ -1357,6 +1365,7 @@ function extractVideoUrlsFromContent(content) {
     if (!value) return;
     const absolute = toAbsoluteUrl(value);
     if (!absolute) return;
+    if (!isLikelyVideoAssetUrl(absolute)) return;
     if (!urls.includes(absolute)) urls.push(absolute);
   };
   const html = String(content || '').trim();
@@ -1402,7 +1411,10 @@ function addVideoClip(url, selected = true) {
 
 function captureVideoClipsFromContent(content) {
   const urls = extractVideoUrlsFromContent(content);
-  urls.forEach((url) => addVideoClip(url, true));
+  if (!urls.length) return;
+  const proxyUrls = urls.filter((url) => String(url).includes('/images/'));
+  const picked = (proxyUrls.length ? proxyUrls : urls)[(proxyUrls.length ? proxyUrls : urls).length - 1];
+  addVideoClip(picked, true);
 }
 
 function selectAllVideoClips(flag) {

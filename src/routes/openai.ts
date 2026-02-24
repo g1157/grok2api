@@ -520,6 +520,17 @@ function parseImageSize(input: unknown): string {
   return String(input ?? "1024x1024").trim() || "1024x1024";
 }
 
+function normalizeWorkflowImageInput(raw: string, origin: string): string {
+  const value = String(raw || "").trim();
+  if (!value) return "";
+  if (value.startsWith("data:image/")) return value;
+  try {
+    return new URL(value, origin).toString();
+  } catch {
+    return value;
+  }
+}
+
 function parseImageConcurrencyOrError(
   input: unknown,
 ): { value: number } | { error: { message: string; code: string } } {
@@ -1186,6 +1197,53 @@ openAiRoutes.get("/images/method", async (c) => {
   return c.json({ image_generation_method: imageGenerationMethod(settingsBundle) });
 });
 
+openAiRoutes.post("/video/parent-post", async (c) => {
+  try {
+    const body = (await c.req.json()) as { image_url?: unknown };
+    const origin = new URL(c.req.url).origin;
+    const imageUrl = normalizeWorkflowImageInput(String(body?.image_url ?? ""), origin);
+    if (!imageUrl) {
+      return c.json(openAiError("Missing 'image_url'", "missing_image_url"), 400);
+    }
+
+    const settingsBundle = await getSettings(c.env);
+    const chosen =
+      (await selectBestToken(c.env.DB, "grok-imagine-1.0-video")) ??
+      (await selectBestToken(c.env.DB, IMAGE_GENERATION_MODEL_ID));
+    if (!chosen) {
+      return c.json(openAiError("No available token", "NO_AVAILABLE_TOKEN"), 503);
+    }
+
+    const cf = normalizeCfCookie(settingsBundle.grok.cf_clearance ?? "");
+    const cookie = buildCookie(chosen.token, cf);
+
+    try {
+      const uploaded = await uploadImage(imageUrl, cookie, settingsBundle.grok);
+      const fileUri = String(uploaded.fileUri ?? "").trim();
+      if (!fileUri) {
+        throw new Error("Upload returned empty fileUri");
+      }
+      const created = await createPost(fileUri, cookie, settingsBundle.grok);
+      const parentPostId = String(created.postId ?? "").trim();
+      if (!parentPostId) {
+        throw new Error("parent_post_id is empty");
+      }
+      return c.json({
+        parent_post_id: parentPostId,
+        image_url: imageUrl,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await recordTokenFailure(c.env.DB, chosen.token, 500, msg.slice(0, 200));
+      await applyCooldown(c.env.DB, chosen.token, 500);
+      throw e;
+    }
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return c.json(openAiError(message || "Internal error", "video_parent_post_failed"), 500);
+  }
+});
+
 openAiRoutes.post("/chat/completions", async (c) => {
   const start = Date.now();
   const ip = getClientIp(c.req.raw);
@@ -1204,6 +1262,8 @@ openAiRoutes.post("/chat/completions", async (c) => {
         video_length?: number;
         resolution?: string;
         preset?: string;
+        parent_post_id?: string;
+        nsfw_enabled?: boolean;
       };
     };
 
@@ -1258,7 +1318,10 @@ openAiRoutes.post("/chat/completions", async (c) => {
 
         let postId: string | undefined;
         if (isVideoModel) {
-          if (imgUris.length) {
+          const requestedParentPostId = String(body.video_config?.parent_post_id ?? "").trim();
+          if (requestedParentPostId) {
+            postId = requestedParentPostId;
+          } else if (imgUris.length) {
             const post = await createPost(imgUris[0]!, cookie, settingsBundle.grok);
             postId = post.postId || undefined;
           } else {

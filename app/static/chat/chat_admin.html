@@ -10,7 +10,7 @@
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-sans/style.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-mono/style.css" rel="stylesheet">
   <link href="/static/common/common.css?v=3" rel="stylesheet">
-  <link href="/static/chat/chat.css?v=4" rel="stylesheet">
+  <link href="/static/chat/chat.css?v=5" rel="stylesheet">
   <link href="/static/common/toast.css" rel="stylesheet">
   <script>
     window.__CHAT_ADMIN__ = true;
@@ -49,7 +49,32 @@
       <div class="tabs">
         <button id="tab-chat" class="tab active" onclick="switchTab('chat')">聊天</button>
         <button id="tab-image" class="tab" onclick="switchTab('image')">生图</button>
+        <button id="tab-edit" class="tab" onclick="switchTab('edit')">图片编辑</button>
         <button id="tab-video" class="tab" onclick="switchTab('video')">生成视频</button>
+      </div>
+
+      <div class="workflow-board">
+        <div class="workflow-head">
+          <div class="workflow-selected">
+            <div id="workflow-selected-preview" class="workflow-preview"></div>
+            <div class="workflow-selected-meta">
+              <div id="workflow-selected-label" class="text-xs text-[var(--accents-6)]">未选择工作图</div>
+              <div class="workflow-parent">parentPostId：<code id="workflow-parent-post-id">-</code></div>
+            </div>
+          </div>
+          <div class="workflow-tools">
+            <label class="workflow-toggle">
+              <input id="workflow-nsfw-toggle" type="checkbox" class="checkbox" checked />
+              <span>NSFW 全流程</span>
+            </label>
+            <button id="workflow-sync-nsfw-btn" class="geist-button-outline text-xs px-3">同步 NSFW</button>
+            <button id="workflow-clear-selection-btn" class="geist-button-outline text-xs px-3">清空工作图</button>
+          </div>
+        </div>
+        <div class="workflow-gallery-wrap">
+          <div id="workflow-gallery-empty" class="workflow-empty">暂无工作流图片，先在“生图”中生成并选择。</div>
+          <div id="workflow-gallery" class="workflow-gallery"></div>
+        </div>
       </div>
 
       <div id="panel-chat" class="panel">
@@ -131,7 +156,40 @@
         <div id="image-results" class="results-grid mt-4"></div>
       </div>
 
+      <div id="panel-edit" class="panel hidden">
+        <div class="grid grid-cols-12 gap-3 items-end">
+          <div class="col-span-12 md:col-span-4">
+            <label class="field-label">工作图</label>
+            <div id="edit-reference-preview" class="workflow-preview workflow-preview-large"></div>
+            <div id="edit-reference-info" class="text-xs text-[var(--accents-5)] mt-2">请先在生图结果中选择一张图</div>
+          </div>
+          <div class="col-span-12 md:col-span-8">
+            <label class="field-label">编辑 Prompt</label>
+            <textarea id="edit-prompt" class="geist-input h-24" placeholder="描述你想如何编辑当前工作图..."></textarea>
+            <div class="grid grid-cols-12 gap-3 items-end mt-3">
+              <div class="col-span-6 md:col-span-3">
+                <label class="field-label">数量 n</label>
+                <input id="edit-n" type="number" class="geist-input" min="1" max="6" value="1" />
+              </div>
+              <div class="col-span-12 md:col-span-9 flex justify-end gap-2">
+                <button id="edit-clear-btn" class="geist-button-outline text-xs px-3">清空结果</button>
+                <button id="edit-run-btn" class="geist-button text-xs px-4">开始编辑</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="edit-results" class="results-grid mt-4"></div>
+      </div>
+
       <div id="panel-video" class="panel hidden">
+        <div class="video-workflow mb-3">
+          <div id="video-reference-preview" class="workflow-preview workflow-preview-large"></div>
+          <div class="video-workflow-meta">
+            <div id="video-reference-info" class="text-xs text-[var(--accents-6)]">可选：从生图/编辑结果中选择一张图</div>
+            <div class="workflow-parent">parentPostId：<code id="video-parent-post-id">-</code></div>
+          </div>
+        </div>
+
         <div class="grid grid-cols-12 gap-3 items-end">
           <div class="col-span-12 md:col-span-7">
             <label class="field-label">Prompt</label>
@@ -185,6 +243,18 @@
         </div>
 
         <div id="video-results" class="mt-4"></div>
+        <div class="video-clip-panel mt-4">
+          <div class="clip-panel-head">
+            <div>视频片段池（<b id="video-clip-count">0</b>）</div>
+            <div class="clip-panel-actions">
+              <button id="video-select-all-btn" class="geist-button-outline text-xs px-3">全选</button>
+              <span id="video-stitch-note" class="clip-cap-note hidden"></span>
+              <button id="video-stitch-btn" class="geist-button-outline text-xs px-3">拼接选中片段</button>
+              <button id="video-clear-clips-btn" class="geist-button-outline text-xs px-3">清空片段</button>
+            </div>
+          </div>
+          <div id="video-clip-list" class="clip-list"></div>
+        </div>
       </div>
     </div>
   </main>
@@ -195,7 +265,7 @@
   <script src="/static/common/admin-auth.js"></script>
   <script src="/static/common/header.js?v=4"></script>
   <script src="/static/common/footer.js"></script>
-  <script src="/static/chat/chat.js?v=5"></script>
+  <script src="/static/chat/chat.js?v=7"></script>
 </body>
 
 </html>

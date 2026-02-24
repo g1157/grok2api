@@ -29,10 +29,18 @@
   border: 1px solid var(--border);
   cursor: pointer;
   transition: border-color 0.2s;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
 }
 
 .imagine-gallery-item:hover {
   border-color: #000;
+}
+
+.imagine-gallery-item.is-selected {
+  border-color: #000;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08);
 }
 
 .imagine-gallery-item img {
@@ -42,27 +50,93 @@
   object-fit: cover;
 }
 
-.imagine-gallery-item .imagine-delete-btn {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  background: rgba(0, 0, 0, 0.6);
-  color: #fff;
+.imagine-gallery-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.imagine-sync-btn,
+.imagine-delete-btn {
   border: none;
   border-radius: 6px;
-  width: 24px;
-  height: 24px;
+  height: 28px;
   font-size: 12px;
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s;
+}
+
+.imagine-sync-btn {
+  background: #111;
+  color: #fff;
+  padding: 0 8px;
+}
+
+.imagine-delete-btn {
+  background: rgba(0, 0, 0, 0.06);
+  color: #111;
+  width: 28px;
+  padding: 0;
+}
+
+.imagine-workflow-box {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  background: linear-gradient(180deg, #ffffff, #fafafa);
+}
+
+.imagine-workflow-body {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.imagine-workflow-preview {
+  width: 96px;
+  height: 96px;
+  border-radius: 10px;
+  border: 1px dashed var(--border);
+  background: rgba(0, 0, 0, 0.02);
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-.imagine-gallery-item:hover .imagine-delete-btn {
-  opacity: 1;
+.imagine-workflow-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.workflow-empty-tip {
+  color: var(--accents-4);
+  font-size: 11px;
+}
+
+.imagine-workflow-meta {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--accents-6);
+}
+
+.imagine-workflow-meta code {
+  display: inline-block;
+  max-width: min(100%, 560px);
+  vertical-align: bottom;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.imagine-gallery-item .imagine-delete-btn {
+  border-radius: 6px;
 }
 
 /* SSO table */
@@ -112,5 +186,16 @@
 @media (max-width: 640px) {
   .imagine-gallery {
     grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  }
+
+  .imagine-workflow-body {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .imagine-workflow-preview {
+    width: 100%;
+    height: 200px;
+    border-style: solid;
   }
 }

@@ -41,6 +41,8 @@ class VideoConfig(BaseModel):
     video_length: Optional[int] = Field(6, description="视频时长(秒): 5-15")
     resolution: Optional[str] = Field("SD", description="视频分辨率: SD, HD")
     preset: Optional[str] = Field("custom", description="风格预设: fun, normal, spicy")
+    parent_post_id: Optional[str] = Field(None, description="复用的 parentPostId（免重复上传）")
+    nsfw_enabled: Optional[bool] = Field(True, description="是否开启 NSFW 全流程")
     
     @field_validator("aspect_ratio")
     @classmethod
@@ -92,6 +94,22 @@ class VideoConfig(BaseModel):
                 code="invalid_preset"
              )
         return v
+
+    @field_validator("parent_post_id")
+    @classmethod
+    def validate_parent_post_id(cls, v):
+        if v is None:
+            return v
+        value = str(v).strip()
+        if not value:
+            return None
+        if len(value) < 6 or len(value) > 256:
+            raise ValidationException(
+                message="parent_post_id length must be between 6 and 256",
+                param="video_config.parent_post_id",
+                code="invalid_parent_post_id",
+            )
+        return value
 
 
 class ChatCompletionRequest(BaseModel):
@@ -228,7 +246,9 @@ async def chat_completions(request: ChatCompletionRequest, api_key: Optional[str
             aspect_ratio=v_conf.aspect_ratio,
             video_length=v_conf.video_length,
             resolution=v_conf.resolution,
-            preset=v_conf.preset
+            preset=v_conf.preset,
+            parent_post_id=v_conf.parent_post_id,
+            nsfw_enabled=v_conf.nsfw_enabled,
         )
     else:
         result = await ChatService.completions(

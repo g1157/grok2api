@@ -11,7 +11,7 @@
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-mono/style.css" rel="stylesheet">
   <link href="/static/common/common.css?v=3" rel="stylesheet">
   <link href="/static/common/toast.css" rel="stylesheet">
-  <link href="/static/imagine/imagine.css?v=2" rel="stylesheet">
+  <link href="/static/imagine/imagine.css?v=3" rel="stylesheet">
 </head>
 
 <body class="min-h-screen flex flex-col" style="background-color: var(--bg);">
@@ -93,6 +93,25 @@
       </div>
     </div>
 
+    <div class="imagine-workflow-box space-y-3">
+      <div class="flex flex-wrap justify-between items-start gap-3">
+        <div>
+          <h2 class="text-xl font-semibold tracking-tight">全局工作流</h2>
+          <p class="text-[var(--accents-4)] mt-1 text-sm">与 Chat 页共享 parentPostId 记忆，支持“生图 → 编辑 → 生视频”无重复上传。</p>
+        </div>
+        <button onclick="resolveWorkflowParentPostId()" class="geist-button-outline text-xs px-3">解析 parentPostId</button>
+      </div>
+      <div class="imagine-workflow-body">
+        <div id="workflow-preview" class="imagine-workflow-preview">
+          <span class="workflow-empty-tip">未选择工作图</span>
+        </div>
+        <div class="imagine-workflow-meta">
+          <div>已选图片：<code id="workflow-selected-url">-</code></div>
+          <div>parentPostId：<code id="workflow-parent-post-id">-</code></div>
+        </div>
+      </div>
+    </div>
+
     <!-- Progress Panel -->
     <div id="progress-panel" class="hidden">
       <div class="space-y-2">
@@ -166,7 +185,7 @@
   <script src="/static/common/header.js?v=4"></script>
   <script src="/static/common/footer.js?v=1"></script>
   <script src="/static/common/toast.js"></script>
-  <script src="/static/imagine/imagine.js?v=2"></script>
+  <script src="/static/imagine/imagine.js?v=3"></script>
 </body>
 
 </html>

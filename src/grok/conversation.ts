@@ -16,6 +16,8 @@ export interface OpenAIChatRequestBody {
     video_length?: number;
     resolution?: string;
     preset?: string;
+    parent_post_id?: string;
+    nsfw_enabled?: boolean;
   };
 }
 
@@ -79,6 +81,8 @@ export function buildConversationPayload(args: {
     video_length?: number;
     resolution?: string;
     preset?: string;
+    parent_post_id?: string;
+    nsfw_enabled?: boolean;
   };
   settings: GrokSettings;
 }): { payload: Record<string, unknown>; referer?: string; isVideoModel: boolean } {
@@ -94,6 +98,7 @@ export function buildConversationPayload(args: {
     const videoLength = Number.isFinite(videoLengthRaw) ? Math.max(1, Math.floor(videoLengthRaw)) : 6;
     const resolution = (args.videoConfig?.resolution ?? "SD") === "HD" ? "HD" : "SD";
     const preset = (args.videoConfig?.preset ?? "normal").trim();
+    const enableNsfw = args.videoConfig?.nsfw_enabled !== false;
 
     let modeFlag = "--mode=custom";
     if (preset === "fun") modeFlag = "--mode=extremely-crazy";
@@ -111,6 +116,7 @@ export function buildConversationPayload(args: {
         message: prompt,
         toolOverrides: { videoGen: true },
         enableSideBySide: true,
+        enableNsfw,
         responseMetadata: {
           experiments: [],
           modelConfigOverride: {
@@ -120,6 +126,7 @@ export function buildConversationPayload(args: {
                 aspectRatio,
                 videoLength,
                 videoResolution: resolution,
+                enableNsfw,
               },
             },
           },

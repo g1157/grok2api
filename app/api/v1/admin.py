@@ -123,7 +123,7 @@ async def _collect_imagine_batch(token: str, prompt: str, aspect_ratio: str) -> 
         token=token,
         prompt=prompt,
         n=6,
-        response_format="b64_json",
+        response_format="url",
         aspect_ratio=aspect_ratio,
         concurrency=1,
     )
@@ -206,21 +206,26 @@ async def admin_imagine_ws(websocket: WebSocket):
                 elapsed_ms = int((time.time() - start_at) * 1000)
 
                 sent_any = False
-                for image_b64 in images:
-                    if not is_valid_imagine_image_value(image_b64):
+                for image_value in images:
+                    if not is_valid_imagine_image_value(image_value):
                         continue
                     sent_any = True
                     sequence += 1
+                    event_payload = {
+                        "type": "image",
+                        "sequence": sequence,
+                        "created_at": int(time.time() * 1000),
+                        "elapsed_ms": elapsed_ms,
+                        "aspect_ratio": aspect_ratio,
+                        "run_id": run_id,
+                    }
+                    raw = str(image_value or "").strip()
+                    if raw.startswith("http://") or raw.startswith("https://") or raw.startswith("/"):
+                        event_payload["url"] = raw
+                    else:
+                        event_payload["b64_json"] = raw
                     ok = await _send(
-                        {
-                            "type": "image",
-                            "b64_json": image_b64,
-                            "sequence": sequence,
-                            "created_at": int(time.time() * 1000),
-                            "elapsed_ms": elapsed_ms,
-                            "aspect_ratio": aspect_ratio,
-                            "run_id": run_id,
-                        }
+                        event_payload
                     )
                     if not ok:
                         stop_event.set()

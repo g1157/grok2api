@@ -172,7 +172,8 @@ class VideoService:
         aspect_ratio: str = "3:2",
         video_length: int = 6,
         resolution: str = "SD",
-        preset: str = "normal"
+        preset: str = "normal",
+        nsfw_enabled: bool = True,
     ) -> dict:
         """构建视频生成载荷"""
         mode_flag = "--mode=custom"
@@ -183,7 +184,8 @@ class VideoService:
         elif preset == "spicy":
             mode_flag = "--mode=extremely-spicy-or-crazy"
             
-        full_prompt = f"{prompt} {mode_flag}"
+        full_prompt = f"{prompt} {mode_flag}".strip()
+        use_nsfw = bool(nsfw_enabled)
         
         return {
             "temporary": True,
@@ -191,6 +193,7 @@ class VideoService:
             "message": full_prompt,
             "toolOverrides": {"videoGen": True},
             "enableSideBySide": True,
+            "enableNsfw": use_nsfw,
             "responseMetadata": {
                 "experiments": [],
                 "modelConfigOverride": {
@@ -199,7 +202,8 @@ class VideoService:
                             "parentPostId": post_id,
                             "aspectRatio": aspect_ratio,
                             "videoLength": video_length,
-                            "videoResolution": resolution
+                            "videoResolution": resolution,
+                            "enableNsfw": use_nsfw,
                         }
                     }
                 }
@@ -214,7 +218,9 @@ class VideoService:
         video_length: int = 6,
         resolution: str = "SD",
         stream: bool = True,
-        preset: str = "normal"
+        preset: str = "normal",
+        parent_post_id: Optional[str] = None,
+        nsfw_enabled: bool = True,
     ) -> AsyncGenerator[bytes, None]:
         """
         生成视频
@@ -238,11 +244,21 @@ class VideoService:
             session = None
             try:
                 # Step 1: 创建帖子
-                post_id = await self.create_post(token, prompt)
+                post_id = str(parent_post_id or "").strip()
+                if not post_id:
+                    post_id = await self.create_post(token, prompt)
                 
                 # Step 2: 建立连接
                 headers = self._build_headers(token)
-                payload = self._build_payload(prompt, post_id, aspect_ratio, video_length, resolution, preset)
+                payload = self._build_payload(
+                    prompt,
+                    post_id,
+                    aspect_ratio,
+                    video_length,
+                    resolution,
+                    preset,
+                    nsfw_enabled=nsfw_enabled,
+                )
                 
                 session = AsyncSession(impersonate=BROWSER)
                 response = await session.post(
@@ -296,7 +312,9 @@ class VideoService:
         video_length: int = 6,
         resolution: str = "SD",
         stream: bool = True,
-        preset: str = "normal"
+        preset: str = "normal",
+        parent_post_id: Optional[str] = None,
+        nsfw_enabled: bool = True,
     ) -> AsyncGenerator[bytes, None]:
         """
         从图片生成视频
@@ -318,11 +336,21 @@ class VideoService:
             session = None
             try:
                 # Step 1: 创建帖子
-                post_id = await self.create_image_post(token, image_url)
+                post_id = str(parent_post_id or "").strip()
+                if not post_id:
+                    post_id = await self.create_image_post(token, image_url)
                 
                 # Step 2: 建立连接
                 headers = self._build_headers(token)
-                payload = self._build_payload(prompt, post_id, aspect_ratio, video_length, resolution, preset)
+                payload = self._build_payload(
+                    prompt,
+                    post_id,
+                    aspect_ratio,
+                    video_length,
+                    resolution,
+                    preset,
+                    nsfw_enabled=nsfw_enabled,
+                )
                 
                 session = AsyncSession(impersonate=BROWSER)
                 response = await session.post(
@@ -376,7 +404,9 @@ class VideoService:
         aspect_ratio: str = "3:2",
         video_length: int = 6,
         resolution: str = "SD",
-        preset: str = "normal"
+        preset: str = "normal",
+        parent_post_id: Optional[str] = None,
+        nsfw_enabled: Optional[bool] = True,
     ):
         """
         视频生成入口
@@ -458,18 +488,30 @@ class VideoService:
         
         # 生成视频
         service = VideoService()
+        use_parent_post_id = str(parent_post_id or "").strip()
+        use_nsfw = True if nsfw_enabled is None else bool(nsfw_enabled)
         
         try:
+            # 优先使用全局 parent_post_id（无需重复上传）
+            if use_parent_post_id:
+                response = await service.generate(
+                    token, prompt,
+                    aspect_ratio, video_length, resolution, stream, preset,
+                    parent_post_id=use_parent_post_id,
+                    nsfw_enabled=use_nsfw,
+                )
             # 图片转视频
-            if image_url:
+            elif image_url:
                 response = await service.generate_from_image(
                     token, prompt, image_url,
-                    aspect_ratio, video_length, resolution, stream, preset
+                    aspect_ratio, video_length, resolution, stream, preset,
+                    nsfw_enabled=use_nsfw,
                 )
             else:
                 response = await service.generate(
                     token, prompt,
-                    aspect_ratio, video_length, resolution, stream, preset
+                    aspect_ratio, video_length, resolution, stream, preset,
+                    nsfw_enabled=use_nsfw,
                 )
         except Exception:
             try:

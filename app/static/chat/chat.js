@@ -1,4 +1,5 @@
-﻿const STORAGE_KEY = 'grok2api_user_api_key';
+const STORAGE_KEY = 'grok2api_user_api_key';
+const WORKFLOW_STORAGE_KEY = 'grok2api_workflow_state_v2';
 
 let currentTab = 'chat';
 let models = [];
@@ -18,6 +19,22 @@ let imageContinuousRunToken = 0;
 let imageContinuousDesiredConcurrency = 1;
 const PREFERRED_CHAT_MODEL = 'grok-4.20-beta';
 let chatSending = false;
+let workflowBusy = false;
+let videoGenerating = false;
+let editGenerating = false;
+let workflowState = {
+  selectedImage: '',
+  selectedOrigin: '',
+  parentPostId: '',
+  nsfwEnabled: true,
+  gallery: [],
+  videoClips: [],
+};
+let workflowCapabilities = {
+  runtime: 'unknown',
+  parentPostEndpoint: '/v1/video/parent-post',
+  videoStitchEnabled: true,
+};
 
 function q(id) {
   return document.getElementById(id);
@@ -43,6 +60,56 @@ function escapeHtml(s) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#039;');
+}
+
+function normalizeRuntimeName(raw) {
+  const value = String(raw || '').trim().toLowerCase();
+  if (!value) return 'unknown';
+  if (value === 'cloudflare-workers') return 'cloudflare-workers';
+  if (value === 'python-fastapi') return 'python-fastapi';
+  return value;
+}
+
+function applyWorkflowCapabilities() {
+  const stitchEnabled = workflowCapabilities.videoStitchEnabled !== false;
+  const stitchBtn = q('video-stitch-btn');
+  const stitchNote = q('video-stitch-note');
+
+  if (stitchBtn) {
+    stitchBtn.classList.toggle('hidden', !stitchEnabled);
+    stitchBtn.disabled = !stitchEnabled;
+  }
+  if (stitchNote) {
+    stitchNote.classList.toggle('hidden', stitchEnabled);
+    if (!stitchEnabled) {
+      const runtimeText = workflowCapabilities.runtime && workflowCapabilities.runtime !== 'unknown'
+        ? `（${workflowCapabilities.runtime}）`
+        : '';
+      stitchNote.textContent = `当前部署已关闭视频拼接${runtimeText}`;
+    }
+  }
+}
+
+async function detectWorkflowCapabilities() {
+  workflowCapabilities = {
+    runtime: 'unknown',
+    parentPostEndpoint: '/v1/video/parent-post',
+    videoStitchEnabled: true,
+  };
+
+  try {
+    const res = await fetch(`/health?t=${Date.now()}`, { cache: 'no-store' });
+    if (res.ok) {
+      const payload = await res.json().catch(() => ({}));
+      const runtime = normalizeRuntimeName(payload?.runtime);
+      workflowCapabilities.runtime = runtime;
+      if (runtime === 'cloudflare-workers') {
+        workflowCapabilities.videoStitchEnabled = false;
+      }
+    }
+  } catch (e) {}
+
+  applyWorkflowCapabilities();
 }
 
 function toAbsoluteUrl(url) {
@@ -318,8 +385,10 @@ async function init() {
 
   const saved = localStorage.getItem(STORAGE_KEY) || '';
   if (!q('api-key-input').value) q('api-key-input').value = saved;
+  loadWorkflowState();
 
   bindFileInputs();
+  bindWorkflowEvents();
   q('image-run-mode')?.addEventListener('change', () => {
     if (getImageRunMode() !== 'continuous') {
       stopImageContinuous();
@@ -331,10 +400,12 @@ async function init() {
   });
   await refreshModels();
   await refreshImageGenerationMethod();
+  await detectWorkflowCapabilities();
+  renderWorkflowState();
 
   chatMessages = [];
   q('chat-messages').innerHTML = '';
-  showUserMsg('system', '提示：选择模型后即可开始聊天；生图/视频请切换到对应 Tab。');
+  showUserMsg('system', '提示：选择模型后即可开始聊天；生图/编辑/视频请切换到对应 Tab。');
 }
 
 function bindFileInputs() {
@@ -351,6 +422,21 @@ function bindFileInputs() {
     addAttachments('video', files);
     q('video-file').value = '';
   });
+}
+
+function bindWorkflowEvents() {
+  q('workflow-nsfw-toggle')?.addEventListener('change', (e) => {
+    setWorkflowNsfwEnabled(Boolean(e.target?.checked));
+  });
+  q('workflow-sync-nsfw-btn')?.addEventListener('click', refreshWorkflowNsfw);
+  q('workflow-clear-selection-btn')?.addEventListener('click', clearWorkflowSelection);
+
+  q('video-stitch-btn')?.addEventListener('click', stitchSelectedVideos);
+  q('video-select-all-btn')?.addEventListener('click', () => selectAllVideoClips(true));
+  q('video-clear-clips-btn')?.addEventListener('click', clearVideoClips);
+
+  q('edit-run-btn')?.addEventListener('click', generateImageEdit);
+  q('edit-clear-btn')?.addEventListener('click', clearEditResults);
 }
 
 function addAttachments(kind, files) {
@@ -385,6 +471,460 @@ function renderAttachments(kind) {
     });
     box.appendChild(div);
   });
+}
+
+function normalizeWorkflowState(raw) {
+  const data = raw && typeof raw === 'object' ? raw : {};
+  const gallery = Array.isArray(data.gallery) ? data.gallery : [];
+  const videoClips = Array.isArray(data.videoClips) ? data.videoClips : [];
+  return {
+    selectedImage: String(data.selectedImage || '').trim(),
+    selectedOrigin: String(data.selectedOrigin || '').trim(),
+    parentPostId: String(data.parentPostId || '').trim(),
+    nsfwEnabled: data.nsfwEnabled !== false,
+    gallery: gallery
+      .map((it, idx) => ({
+        id: String(it?.id || `img-${idx}-${Date.now()}`),
+        src: String(it?.src || '').trim(),
+        origin: String(it?.origin || '').trim(),
+        parentPostId: String(it?.parentPostId || '').trim(),
+        createdAt: Number(it?.createdAt || Date.now()),
+      }))
+      .filter((it) => Boolean(it.src))
+      .slice(0, 120),
+    videoClips: videoClips
+      .map((it, idx) => ({
+        id: String(it?.id || `clip-${idx}-${Date.now()}`),
+        url: String(it?.url || '').trim(),
+        createdAt: Number(it?.createdAt || Date.now()),
+        selected: it?.selected !== false,
+      }))
+      .filter((it) => Boolean(it.url))
+      .slice(0, 60),
+  };
+}
+
+function isPersistableMediaSrc(src) {
+  const value = String(src || '').trim();
+  if (!value) return false;
+  if (value.startsWith('data:')) return false;
+  return value.length < 2048;
+}
+
+function saveWorkflowState() {
+  try {
+    const persistableGallery = workflowState.gallery.filter((it) => isPersistableMediaSrc(it?.src));
+    const selectedImage = isPersistableMediaSrc(workflowState.selectedImage) ? workflowState.selectedImage : '';
+    const persistable = {
+      ...workflowState,
+      selectedImage,
+      selectedOrigin: selectedImage ? workflowState.selectedOrigin : '',
+      parentPostId: selectedImage ? workflowState.parentPostId : '',
+      gallery: persistableGallery,
+    };
+    localStorage.setItem(WORKFLOW_STORAGE_KEY, JSON.stringify(persistable));
+  } catch (e) {}
+}
+
+function loadWorkflowState() {
+  try {
+    const raw = localStorage.getItem(WORKFLOW_STORAGE_KEY);
+    if (!raw) return;
+    workflowState = normalizeWorkflowState(JSON.parse(raw));
+  } catch (e) {
+    workflowState = normalizeWorkflowState({});
+  }
+}
+
+function findWorkflowItemBySrc(src) {
+  const normalized = toAbsoluteUrl(src);
+  return workflowState.gallery.find((it) => it.src === normalized) || null;
+}
+
+function addWorkflowImage(src, origin) {
+  const normalized = toAbsoluteUrl(src);
+  if (!normalized) return null;
+  let item = findWorkflowItemBySrc(normalized);
+  if (!item) {
+    item = {
+      id: `img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      src: normalized,
+      origin: String(origin || '').trim(),
+      parentPostId: '',
+      createdAt: Date.now(),
+    };
+    workflowState.gallery.unshift(item);
+  } else if (origin && !item.origin) {
+    item.origin = String(origin).trim();
+  }
+  if (workflowState.gallery.length > 120) workflowState.gallery = workflowState.gallery.slice(0, 120);
+  const dataImages = workflowState.gallery.filter((it) => String(it.src || '').startsWith('data:'));
+  if (dataImages.length > 24) {
+    const keepDataIds = new Set(dataImages.slice(0, 24).map((it) => it.id));
+    workflowState.gallery = workflowState.gallery.filter(
+      (it) => !String(it.src || '').startsWith('data:') || keepDataIds.has(it.id),
+    );
+  }
+  saveWorkflowState();
+  renderWorkflowGallery();
+  return item;
+}
+
+function removeWorkflowImage(id) {
+  const before = workflowState.gallery.length;
+  workflowState.gallery = workflowState.gallery.filter((it) => it.id !== id);
+  if (before === workflowState.gallery.length) return;
+  if (!workflowState.gallery.find((it) => it.src === workflowState.selectedImage)) {
+    workflowState.selectedImage = '';
+    workflowState.selectedOrigin = '';
+    workflowState.parentPostId = '';
+  }
+  saveWorkflowState();
+  renderWorkflowState();
+}
+
+function setWorkflowSelection(src, origin, ensureParent = true) {
+  const item = addWorkflowImage(src, origin);
+  if (!item) return;
+  workflowState.selectedImage = item.src;
+  workflowState.selectedOrigin = item.origin || String(origin || '').trim();
+  workflowState.parentPostId = String(item.parentPostId || '').trim();
+  saveWorkflowState();
+  renderWorkflowState();
+  if (ensureParent && !workflowState.parentPostId) {
+    ensureParentPostIdForSelection(false, true);
+  }
+}
+
+function clearWorkflowSelection() {
+  workflowState.selectedImage = '';
+  workflowState.selectedOrigin = '';
+  workflowState.parentPostId = '';
+  saveWorkflowState();
+  renderWorkflowState();
+}
+
+function setWorkflowNsfwEnabled(enabled) {
+  workflowState.nsfwEnabled = Boolean(enabled);
+  saveWorkflowState();
+  renderWorkflowState();
+}
+
+function renderSelectedPreview(container, emptyText) {
+  if (!container) return;
+  container.innerHTML = '';
+  const src = String(workflowState.selectedImage || '').trim();
+  if (!src) {
+    const tip = document.createElement('div');
+    tip.className = 'workflow-empty';
+    tip.textContent = emptyText;
+    container.appendChild(tip);
+    return;
+  }
+  const img = document.createElement('img');
+  img.src = src;
+  img.alt = 'selected-image';
+  bindRetryableImage(img);
+  container.appendChild(img);
+}
+
+function renderWorkflowGallery() {
+  const box = q('workflow-gallery');
+  const empty = q('workflow-gallery-empty');
+  if (!box) return;
+  box.innerHTML = '';
+  if (!workflowState.gallery.length) {
+    if (empty) empty.classList.remove('hidden');
+    return;
+  }
+  if (empty) empty.classList.add('hidden');
+
+  workflowState.gallery.forEach((item) => {
+    const card = document.createElement('div');
+    const active = workflowState.selectedImage === item.src;
+    card.className = `workflow-gallery-item${active ? ' is-active' : ''}`;
+    card.innerHTML = `
+      <img src="${item.src}" alt="workflow-image" />
+      <div class="workflow-gallery-meta">${escapeHtml(item.origin || 'image')}</div>
+      <div class="workflow-gallery-actions">
+        <button type="button" class="wf-btn-select">选中</button>
+        <button type="button" class="wf-btn-remove">移除</button>
+      </div>
+    `;
+    bindRetryableImage(card.querySelector('img'));
+    card.querySelector('.wf-btn-select')?.addEventListener('click', () => {
+      setWorkflowSelection(item.src, item.origin, true);
+    });
+    card.querySelector('.wf-btn-remove')?.addEventListener('click', () => {
+      removeWorkflowImage(item.id);
+    });
+    box.appendChild(card);
+  });
+}
+
+function renderVideoClips() {
+  const list = q('video-clip-list');
+  const count = q('video-clip-count');
+  if (count) count.textContent = String(workflowState.videoClips.length);
+  if (!list) return;
+  list.innerHTML = '';
+  if (!workflowState.videoClips.length) {
+    list.innerHTML = '<div class="workflow-empty">暂无视频片段</div>';
+    return;
+  }
+  workflowState.videoClips.forEach((clip) => {
+    const row = document.createElement('label');
+    row.className = 'clip-row';
+    row.innerHTML = `
+      <input type="checkbox" class="checkbox" ${clip.selected !== false ? 'checked' : ''} />
+      <a href="${clip.url}" target="_blank" rel="noopener noreferrer">${escapeHtml(clip.url)}</a>
+    `;
+    row.querySelector('input')?.addEventListener('change', (e) => {
+      clip.selected = Boolean(e.target?.checked);
+      saveWorkflowState();
+    });
+    list.appendChild(row);
+  });
+}
+
+function renderWorkflowState() {
+  const selectedLabel = q('workflow-selected-label');
+  const globalParent = q('workflow-parent-post-id');
+  const videoParent = q('video-parent-post-id');
+  const editRefInfo = q('edit-reference-info');
+  const videoRefInfo = q('video-reference-info');
+  const nsfwToggle = q('workflow-nsfw-toggle');
+
+  renderSelectedPreview(q('workflow-selected-preview'), '未选择工作图');
+  renderSelectedPreview(q('edit-reference-preview'), '请先在生图结果中选择一张图');
+  renderSelectedPreview(q('video-reference-preview'), '将使用工作流中已选图片');
+
+  if (selectedLabel) {
+    selectedLabel.textContent = workflowState.selectedImage
+      ? `来源：${workflowState.selectedOrigin || 'image'}`
+      : '未选择工作图';
+  }
+  const parentText = workflowState.parentPostId || (workflowBusy ? '解析中...' : '-');
+  if (globalParent) globalParent.textContent = parentText;
+  if (videoParent) videoParent.textContent = parentText;
+  if (editRefInfo) editRefInfo.textContent = workflowState.selectedImage ? '已加载工作图，可直接编辑' : '未选择工作图';
+  if (videoRefInfo) {
+    if (workflowState.parentPostId) videoRefInfo.textContent = '已命中 parentPostId，生视频无需重新上传';
+    else if (workflowState.selectedImage) videoRefInfo.textContent = '已选工作图，首次会自动解析 parentPostId';
+    else videoRefInfo.textContent = '可选：从生图/编辑结果中选择一张图';
+  }
+  if (nsfwToggle) nsfwToggle.checked = workflowState.nsfwEnabled !== false;
+
+  renderWorkflowGallery();
+  renderVideoClips();
+}
+
+function buildWorkflowActionRow(src, origin) {
+  const row = document.createElement('div');
+  row.className = 'workflow-inline-actions';
+  row.innerHTML = `
+    <button type="button" class="wf-inline-btn">选中工作图</button>
+    <button type="button" class="wf-inline-btn">去编辑</button>
+    <button type="button" class="wf-inline-btn">去视频</button>
+  `;
+  const [selectBtn, editBtn, videoBtn] = Array.from(row.querySelectorAll('button'));
+  selectBtn?.addEventListener('click', () => setWorkflowSelection(src, origin, true));
+  editBtn?.addEventListener('click', () => {
+    setWorkflowSelection(src, origin, true);
+    switchTab('edit');
+  });
+  videoBtn?.addEventListener('click', () => {
+    setWorkflowSelection(src, origin, true);
+    switchTab('video');
+  });
+  return row;
+}
+
+function attachWorkflowActions(container, src, origin) {
+  if (!container || !src) return;
+  const absolute = toAbsoluteUrl(src);
+  addWorkflowImage(absolute, origin);
+  if (container.querySelector('.workflow-inline-actions')) return;
+  container.appendChild(buildWorkflowActionRow(absolute, origin));
+}
+
+async function ensureParentPostIdForSelection(force = false, silent = false) {
+  const selected = String(workflowState.selectedImage || '').trim();
+  if (!selected) return '';
+  if (!getUserApiKey()) return '';
+
+  const item = findWorkflowItemBySrc(selected);
+  if (!force && item?.parentPostId) {
+    workflowState.parentPostId = item.parentPostId;
+    saveWorkflowState();
+    renderWorkflowState();
+    return item.parentPostId;
+  }
+  if (workflowBusy) return workflowState.parentPostId;
+
+  workflowBusy = true;
+  renderWorkflowState();
+  try {
+    const endpoint = String(workflowCapabilities.parentPostEndpoint || '/v1/video/parent-post').trim();
+    const headers = { ...buildApiHeaders(), 'Content-Type': 'application/json' };
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ image_url: selected }),
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload?.error?.message || payload?.detail || `HTTP ${res.status}`);
+    const postId = String(payload?.parent_post_id || '').trim();
+    if (!postId) throw new Error('parent_post_id is empty');
+
+    workflowState.parentPostId = postId;
+    if (item) item.parentPostId = postId;
+    saveWorkflowState();
+    renderWorkflowState();
+    return postId;
+  } catch (e) {
+    if (!silent) showToast(`解析 parentPostId 失败: ${e?.message || e}`, 'error');
+    return '';
+  } finally {
+    workflowBusy = false;
+    renderWorkflowState();
+  }
+}
+
+async function refreshWorkflowNsfw() {
+  const headers = { ...buildApiHeaders(), 'Content-Type': 'application/json' };
+  if (!headers.Authorization) return showToast('请先填写 API Key', 'warning');
+  const btn = q('workflow-sync-nsfw-btn');
+  const oldText = btn?.textContent || '';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '同步中...';
+  }
+  try {
+    const res = await fetch('/api/v1/admin/tokens/nsfw/refresh', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ all: true, retries: 1 }),
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload?.detail || payload?.error || `HTTP ${res.status}`);
+    showToast('NSFW 全流程刷新已触发', 'success');
+  } catch (e) {
+    showToast(`NSFW 刷新失败: ${e?.message || e}`, 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = oldText || '同步 NSFW';
+    }
+  }
+}
+
+function extractVideoUrlsFromContent(content) {
+  const urls = [];
+  const html = String(content || '').trim();
+  if (!html) return urls;
+  const doc = new DOMParser().parseFromString(`<div>${html}</div>`, 'text/html');
+  doc.querySelectorAll('video,source,a').forEach((el) => {
+    let raw = '';
+    if (el.tagName.toUpperCase() === 'A') raw = String(el.getAttribute('href') || '').trim();
+    else raw = String(el.getAttribute('src') || '').trim();
+    if (!raw) return;
+    const absolute = toAbsoluteUrl(raw);
+    if (!absolute) return;
+    if (!urls.includes(absolute)) urls.push(absolute);
+  });
+  return urls;
+}
+
+function addVideoClip(url, selected = true) {
+  const absolute = toAbsoluteUrl(url);
+  if (!absolute) return null;
+  let clip = workflowState.videoClips.find((it) => it.url === absolute) || null;
+  if (!clip) {
+    clip = {
+      id: `clip-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      url: absolute,
+      createdAt: Date.now(),
+      selected,
+    };
+    workflowState.videoClips.unshift(clip);
+  } else {
+    clip.selected = selected;
+  }
+  if (workflowState.videoClips.length > 60) workflowState.videoClips = workflowState.videoClips.slice(0, 60);
+  saveWorkflowState();
+  renderVideoClips();
+  return clip;
+}
+
+function captureVideoClipsFromContent(content) {
+  const urls = extractVideoUrlsFromContent(content);
+  urls.forEach((url) => addVideoClip(url, true));
+}
+
+function selectAllVideoClips(flag) {
+  workflowState.videoClips.forEach((it) => {
+    it.selected = Boolean(flag);
+  });
+  saveWorkflowState();
+  renderVideoClips();
+}
+
+async function stitchSelectedVideos() {
+  if (workflowCapabilities.videoStitchEnabled === false) {
+    return showToast('当前部署未启用视频拼接（CF 模式）', 'warning');
+  }
+  const selected = workflowState.videoClips.filter((it) => it.selected !== false).map((it) => it.url);
+  if (selected.length < 2) return showToast('请至少选择 2 段视频进行拼接', 'warning');
+
+  const headers = { ...buildApiHeaders(), 'Content-Type': 'application/json' };
+  if (!headers.Authorization) return showToast('请先填写 API Key', 'warning');
+
+  const btn = q('video-stitch-btn');
+  const oldText = btn?.textContent || '';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '拼接中...';
+  }
+
+  try {
+    const res = await fetch('/v1/video/stitch', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ videos: selected }),
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload?.detail || payload?.error || `HTTP ${res.status}`);
+    const url = String(payload?.url || '').trim();
+    if (!url) throw new Error('No stitched video URL');
+    addVideoClip(url, true);
+    showToast(`拼接完成（${payload?.mode || 'copy'}）`, 'success');
+
+    const results = q('video-results');
+    if (results) {
+      const bubble = document.createElement('div');
+      bubble.className = 'msg-bubble';
+      renderContent(
+        bubble,
+        `<video controls preload="none"><source src="${escapeHtml(url)}" type="video/mp4"></video>`,
+        false,
+      );
+      results.prepend(bubble);
+    }
+  } catch (e) {
+    showToast(`视频拼接失败: ${e?.message || e}`, 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = oldText || '拼接选中片段';
+    }
+  }
+}
+
+function clearVideoClips() {
+  workflowState.videoClips = [];
+  saveWorkflowState();
+  renderVideoClips();
 }
 
 function getImageRunMode() {
@@ -529,7 +1069,13 @@ function appendWaterfallImage(item, connectionIndex) {
     </div>
   `;
   waterfall.prepend(card);
-  bindRetryableImage(card.querySelector('img'));
+  const imageEl = card.querySelector('img');
+  bindRetryableImage(imageEl);
+  imageEl?.addEventListener('click', () => setWorkflowSelection(src, 'ws-waterfall', true));
+  attachWorkflowActions(card, src, 'ws-waterfall');
+  if (!workflowState.selectedImage) {
+    setWorkflowSelection(src, 'ws-waterfall', false);
+  }
 
   imageContinuousCount += 1;
   if (elapsed > 0) {
@@ -821,6 +1367,7 @@ async function refreshModels() {
     const filtered = models.filter((m) => {
       const id = String(m.id || '');
       if (currentTab === 'image') return id === 'grok-imagine-1.0';
+      if (currentTab === 'edit') return id === 'grok-imagine-1.0-edit';
       if (currentTab === 'video') return id === 'grok-imagine-1.0-video';
       return !/imagine/i.test(id) || id === 'grok-4-heavy';
     });
@@ -840,6 +1387,10 @@ async function refreshModels() {
       sel.value = filteredIds.includes('grok-imagine-1.0') ? 'grok-imagine-1.0' : (filteredIds[0] || '');
       return;
     }
+    if (currentTab === 'edit') {
+      sel.value = filteredIds.includes('grok-imagine-1.0-edit') ? 'grok-imagine-1.0-edit' : (filteredIds[0] || '');
+      return;
+    }
     if (currentTab === 'video') {
       sel.value = filteredIds.includes('grok-imagine-1.0-video') ? 'grok-imagine-1.0-video' : (filteredIds[0] || '');
       return;
@@ -857,10 +1408,19 @@ async function refreshModels() {
 }
 
 function saveApiKey() {
+  const oldKey = String(localStorage.getItem(STORAGE_KEY) || '').trim();
   const k = getUserApiKey();
   if (!k) return showToast('请输入 API Key', 'warning');
   stopImageContinuous();
   localStorage.setItem(STORAGE_KEY, k);
+  if (oldKey !== k) {
+    workflowState.parentPostId = '';
+    workflowState.gallery.forEach((it) => {
+      it.parentPostId = '';
+    });
+    saveWorkflowState();
+    renderWorkflowState();
+  }
   showToast('已保存', 'success');
   refreshModels();
   refreshImageGenerationMethod();
@@ -873,6 +1433,12 @@ function clearApiKey() {
   imageGenerationMethod = 'legacy';
   imageGenerationExperimental = false;
   updateImageModeUI();
+  workflowState.parentPostId = '';
+  workflowState.gallery.forEach((it) => {
+    it.parentPostId = '';
+  });
+  saveWorkflowState();
+  renderWorkflowState();
   showToast('已清除', 'success');
 }
 
@@ -881,12 +1447,16 @@ function switchTab(tab) {
     stopImageContinuous();
   }
   currentTab = tab;
-  ['chat', 'image', 'video'].forEach((t) => {
+  ['chat', 'image', 'edit', 'video'].forEach((t) => {
     q(`tab-${t}`).classList.toggle('active', t === tab);
     q(`panel-${t}`).classList.toggle('hidden', t !== tab);
   });
   refreshModels();
   if (tab === 'image') refreshImageGenerationMethod();
+  renderWorkflowState();
+  if (tab === 'video' && workflowState.selectedImage && !workflowState.parentPostId) {
+    ensureParentPostIdForSelection(false, true);
+  }
 }
 
 function pickChatImage() {
@@ -1103,7 +1673,12 @@ function updateImageCardCompleted(card, src, failed) {
   img.alt = 'image';
   img.src = src;
   bindRetryableImage(img);
+  img.addEventListener('click', () => setWorkflowSelection(src, 'image-result', true));
   card.insertBefore(img, card.firstChild);
+  attachWorkflowActions(card, src, 'image-result');
+  if (!workflowState.selectedImage) {
+    setWorkflowSelection(src, 'image-result', false);
+  }
 
   if (status) status.textContent = '完成';
 }
@@ -1255,7 +1830,122 @@ async function generateImage() {
   }
 }
 
+function setEditGeneratingState(running) {
+  editGenerating = Boolean(running);
+  const btn = q('edit-run-btn');
+  if (btn) btn.disabled = editGenerating;
+}
+
+function clearEditResults() {
+  const box = q('edit-results');
+  if (box) box.innerHTML = '';
+}
+
+function dataUrlToBlob(dataUrl) {
+  const raw = String(dataUrl || '');
+  const match = raw.match(/^data:([^;]+);base64,(.+)$/i);
+  if (!match) throw new Error('Invalid data URL');
+  const mime = match[1] || 'image/png';
+  const b64 = match[2] || '';
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) arr[i] = bin.charCodeAt(i);
+  return new Blob([arr], { type: mime });
+}
+
+async function sourceToImageFile(src) {
+  const value = String(src || '').trim();
+  if (!value) throw new Error('Missing image source');
+
+  let blob = null;
+  if (value.startsWith('data:image/')) {
+    blob = dataUrlToBlob(value);
+  } else {
+    const res = await fetch(value, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`Load image failed (${res.status})`);
+    blob = await res.blob();
+  }
+  const ext = (blob.type || 'image/png').split('/')[1] || 'png';
+  const filename = `workflow-${Date.now()}.${ext}`;
+  return new File([blob], filename, { type: blob.type || 'image/png' });
+}
+
+async function generateImageEdit() {
+  if (editGenerating) return showToast('编辑任务进行中，请稍候', 'warning');
+  const prompt = String(q('edit-prompt')?.value || '').trim();
+  if (!prompt) return showToast('请输入编辑 prompt', 'warning');
+
+  const selectedSrc = String(workflowState.selectedImage || '').trim();
+  if (!selectedSrc) return showToast('请先在生图结果中选择一张工作图', 'warning');
+
+  const headers = buildApiHeaders();
+  if (!headers.Authorization) return showToast('请先填写 API Key', 'warning');
+
+  const n = Math.max(1, Math.min(6, Math.floor(Number(q('edit-n')?.value || 1) || 1)));
+  const model = 'grok-imagine-1.0-edit';
+
+  setEditGeneratingState(true);
+  try {
+    const imageFile = await sourceToImageFile(selectedSrc);
+    const fd = new FormData();
+    fd.append('prompt', prompt);
+    fd.append('model', model);
+    fd.append('n', String(n));
+    fd.append('stream', 'false');
+    fd.append('response_format', 'url');
+    fd.append('image', imageFile, imageFile.name);
+
+    const res = await fetch('/v1/images/edits', {
+      method: 'POST',
+      headers,
+      body: fd,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error?.message || data?.detail || `HTTP ${res.status}`);
+
+    const items = Array.isArray(data?.data) ? data.data : [];
+    if (!items.length) throw new Error('No edited image returned');
+    clearEditResults();
+
+    let firstSrc = '';
+    items.forEach((it, idx) => {
+      const src = pickImageSrc(it);
+      if (!src) return;
+      if (!firstSrc) firstSrc = src;
+      const card = document.createElement('div');
+      card.className = 'result-card';
+      card.innerHTML = `
+        <img alt="edit-image" src="${src}" />
+        <div class="result-meta"><span>#${idx + 1}</span><span>编辑结果</span></div>
+      `;
+      bindRetryableImage(card.querySelector('img'));
+      card.querySelector('img')?.addEventListener('click', () => setWorkflowSelection(src, 'edit-result', true));
+      attachWorkflowActions(card, src, 'edit-result');
+      q('edit-results')?.appendChild(card);
+    });
+    if (!q('edit-results')?.children?.length) throw new Error('Edited image data is empty');
+
+    if (firstSrc) {
+      setWorkflowSelection(firstSrc, 'edit-result', true);
+      showToast('编辑完成，已自动选中第一张结果', 'success');
+    } else {
+      showToast('编辑完成', 'success');
+    }
+  } catch (e) {
+    showToast(`图片编辑失败: ${e?.message || e}`, 'error');
+  } finally {
+    setEditGeneratingState(false);
+  }
+}
+
+function setVideoGeneratingState(running) {
+  videoGenerating = Boolean(running);
+  const btn = q('panel-video')?.querySelector('button[onclick="generateVideo()"]');
+  if (btn) btn.disabled = videoGenerating;
+}
+
 async function generateVideo() {
+  if (videoGenerating) return showToast('视频任务进行中，请稍候', 'warning');
   const prompt = String(q('video-prompt').value || '').trim();
   if (!prompt) return showToast('请输入 prompt', 'warning');
 
@@ -1269,13 +1959,25 @@ async function generateVideo() {
     video_length: Number(q('video-length').value || 6),
     resolution: String(q('video-resolution').value || 'SD'),
     preset: String(q('video-preset').value || 'custom'),
+    parent_post_id: '',
+    nsfw_enabled: workflowState.nsfwEnabled !== false,
   };
 
+  setVideoGeneratingState(true);
   try {
     let imgUrls = [];
     if (videoAttachments.length) {
-      showToast('上传图片中...', 'info');
+      showToast('上传参考图中...', 'info');
       imgUrls = await uploadImages(videoAttachments.slice(0, 1).map((x) => x.file));
+    } else {
+      if (workflowState.selectedImage && !workflowState.parentPostId) {
+        await ensureParentPostIdForSelection(false, true);
+      }
+      if (workflowState.parentPostId) {
+        videoConfig.parent_post_id = workflowState.parentPostId;
+      } else if (workflowState.selectedImage) {
+        imgUrls = [workflowState.selectedImage];
+      }
     }
 
     const userContent = imgUrls.length
@@ -1289,15 +1991,18 @@ async function generateVideo() {
     bubble.className = 'msg-bubble';
     q('video-results').appendChild(bubble);
 
+    let content = '';
     if (stream) {
-      await streamVideo(reqBody, bubble);
+      content = await streamVideo(reqBody, bubble);
     } else {
       const res = await fetch('/v1/chat/completions', { method: 'POST', headers, body: JSON.stringify(reqBody) });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error?.message || data?.detail || `HTTP ${res.status}`);
-      const content = data?.choices?.[0]?.message?.content || '';
+      content = String(data?.choices?.[0]?.message?.content || '');
       renderContent(bubble, content, false);
     }
+
+    captureVideoClipsFromContent(content);
 
     videoAttachments.forEach((a) => {
       try { URL.revokeObjectURL(a.previewUrl); } catch (e) {}
@@ -1306,6 +2011,8 @@ async function generateVideo() {
     renderAttachments('video');
   } catch (e) {
     showToast('生成视频失败: ' + (e?.message || e), 'error');
+  } finally {
+    setVideoGeneratingState(false);
   }
 }
 
@@ -1330,7 +2037,7 @@ async function streamVideo(body, bubbleEl) {
       const line = part.trim();
       if (!line.startsWith('data:')) continue;
       const payload = line.slice(5).trim();
-      if (payload === '[DONE]') return;
+      if (payload === '[DONE]') return acc;
       try {
         const obj = JSON.parse(payload);
         const delta = obj?.choices?.[0]?.delta?.content;
@@ -1341,6 +2048,7 @@ async function streamVideo(body, bubbleEl) {
       } catch (e) {}
     }
   }
+  return acc;
 }
 
 if (document.readyState === 'loading') {
@@ -1348,4 +2056,3 @@ if (document.readyState === 'loading') {
 } else {
   init();
 }
-

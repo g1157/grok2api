@@ -113,6 +113,16 @@ function isContentModerationMessage(message: string): boolean {
   );
 }
 
+function isFailedToRespondMessage(raw: unknown): boolean {
+  const msg = String(raw ?? "").trim().toLowerCase();
+  if (!msg) return false;
+  return msg.includes("failed to respond");
+}
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function enforceQuota(args: {
   env: Env;
   apiAuth: ApiAuthInfo;
@@ -1381,6 +1391,7 @@ openAiRoutes.post("/chat/completions", async (c) => {
       : [401, 429];
 
     const stream = Boolean(body.stream);
+    const isVideoModel = Boolean(cfg.is_video_model);
     const maxRetry = 3;
     let lastErr: string | null = null;
 
@@ -1408,13 +1419,14 @@ openAiRoutes.post("/chat/completions", async (c) => {
       const cookie = cf ? `sso-rw=${jwt};sso=${jwt};${cf}` : `sso-rw=${jwt};sso=${jwt}`;
 
       const { content, images } = extractContent(body.messages as any);
-      const isVideoModel = Boolean(cfg.is_video_model);
       const imgInputs = isVideoModel && images.length > 1 ? images.slice(0, 1) : images;
       const normalizedImgInputs = imgInputs
         .map((u) => normalizeWorkflowImageInput(String(u ?? ""), origin))
         .filter(Boolean);
 
+      let stage: "upload" | "create_post" | "conversation" | "parse" = "upload";
       try {
+        stage = "upload";
         const uploads = await mapLimit(normalizedImgInputs, 5, (u) => {
           const sourceHeaders = buildSourceFetchHeaders(u, origin, incomingAuth);
           return uploadImage(u, cookie, settingsBundle.grok, sourceHeaders ? { sourceHeaders } : undefined);
@@ -1428,9 +1440,11 @@ openAiRoutes.post("/chat/completions", async (c) => {
           if (requestedParentPostId) {
             postId = requestedParentPostId;
           } else if (imgUris.length) {
+            stage = "create_post";
             const post = await createPost(imgUris[0]!, cookie, settingsBundle.grok);
             postId = post.postId || undefined;
           } else {
+            stage = "create_post";
             const post = await createMediaPost(
               { mediaType: "MEDIA_POST_TYPE_VIDEO", prompt: content },
               cookie,
@@ -1450,23 +1464,27 @@ openAiRoutes.post("/chat/completions", async (c) => {
           settings: settingsBundle.grok,
         });
 
-        const upstream = await sendConversationRequest({
-          payload,
-          cookie,
-          settings: settingsBundle.grok,
-          ...(referer ? { referer } : {}),
-        });
-
-        if (!upstream.ok) {
-          const txt = await upstream.text().catch(() => "");
-          lastErr = `Upstream ${upstream.status}: ${txt.slice(0, 200)}`;
-          await recordTokenFailure(c.env.DB, jwt, upstream.status, txt.slice(0, 200));
-          await applyCooldown(c.env.DB, jwt, upstream.status);
-          if (retryCodes.includes(upstream.status) && attempt < maxRetry - 1) continue;
-          break;
-        }
+        const requestConversation = () => {
+          stage = "conversation";
+          return sendConversationRequest({
+            payload,
+            cookie,
+            settings: settingsBundle.grok,
+            ...(referer ? { referer } : {}),
+          });
+        };
 
         if (stream) {
+          const upstream = await requestConversation();
+          if (!upstream.ok) {
+            const txt = await upstream.text().catch(() => "");
+            lastErr = `Upstream ${upstream.status}: ${txt.slice(0, 200)}`;
+            await recordTokenFailure(c.env.DB, jwt, upstream.status, txt.slice(0, 200));
+            await applyCooldown(c.env.DB, jwt, upstream.status);
+            if (retryCodes.includes(upstream.status) && attempt < maxRetry - 1) continue;
+            break;
+          }
+
           const sse = createOpenAiStreamFromGrokNdjson(upstream, {
             cookie,
             settings: settingsBundle.grok,
@@ -1498,6 +1516,77 @@ openAiRoutes.post("/chat/completions", async (c) => {
           });
         }
 
+        if (isVideoModel) {
+          const localVideoRetryMax = 3;
+          let localErr = "[video:conversation] unknown error";
+          for (let localAttempt = 0; localAttempt < localVideoRetryMax; localAttempt++) {
+            const upstream = await requestConversation();
+            if (!upstream.ok) {
+              const txt = await upstream.text().catch(() => "");
+              const brief = txt.slice(0, 200);
+              const errMsg = `[video:conversation] Upstream ${upstream.status}: ${brief}`;
+              localErr = errMsg;
+              const retryableConversation = retryCodes.includes(upstream.status) || upstream.status >= 500 || isFailedToRespondMessage(brief);
+              if (retryableConversation && localAttempt < localVideoRetryMax - 1) {
+                await sleepMs(350 * (localAttempt + 1));
+                continue;
+              }
+              if (retryableConversation) {
+                throw new Error(`[video:retryable] ${errMsg}`);
+              }
+              throw new Error(errMsg);
+            }
+
+            stage = "parse";
+            try {
+              const json = await parseOpenAiFromGrokNdjson(upstream, {
+                cookie,
+                settings: settingsBundle.grok,
+                global: settingsBundle.global,
+                origin,
+                requestedModel,
+              });
+
+              const duration = (Date.now() - start) / 1000;
+              await addRequestLog(c.env.DB, {
+                ip,
+                model: requestedModel,
+                duration: Number(duration.toFixed(2)),
+                status: 200,
+                key_name: keyName,
+                token_suffix: jwt.slice(-6),
+                error: "",
+              });
+
+              return c.json(json);
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e);
+              const errMsg = `[video:parse] ${msg}`;
+              localErr = errMsg;
+              if (isFailedToRespondMessage(msg) && localAttempt < localVideoRetryMax - 1) {
+                await sleepMs(350 * (localAttempt + 1));
+                continue;
+              }
+              if (isFailedToRespondMessage(msg)) {
+                throw new Error(`[video:retryable] ${errMsg}`);
+              }
+              throw new Error(errMsg);
+            }
+          }
+          throw new Error(`[video:retryable] ${localErr}`);
+        }
+
+        const upstream = await requestConversation();
+        if (!upstream.ok) {
+          const txt = await upstream.text().catch(() => "");
+          lastErr = `Upstream ${upstream.status}: ${txt.slice(0, 200)}`;
+          await recordTokenFailure(c.env.DB, jwt, upstream.status, txt.slice(0, 200));
+          await applyCooldown(c.env.DB, jwt, upstream.status);
+          if (retryCodes.includes(upstream.status) && attempt < maxRetry - 1) continue;
+          break;
+        }
+
+        stage = "parse";
         const json = await parseOpenAiFromGrokNdjson(upstream, {
           cookie,
           settings: settingsBundle.grok,
@@ -1519,10 +1608,16 @@ openAiRoutes.post("/chat/completions", async (c) => {
 
         return c.json(json);
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
+        const rawMsg = e instanceof Error ? e.message : String(e);
+        const withStage =
+          isVideoModel && !rawMsg.startsWith("[video:") ? `[video:${stage}] ${rawMsg}` : rawMsg;
+        const retryableVideo = isVideoModel && withStage.startsWith("[video:retryable]");
+        const msg = retryableVideo ? withStage.replace(/^\[video:retryable\]\s*/, "") : withStage;
         lastErr = msg;
-        await recordTokenFailure(c.env.DB, jwt, 500, msg);
-        await applyCooldown(c.env.DB, jwt, 500);
+        if (!retryableVideo) {
+          await recordTokenFailure(c.env.DB, jwt, 500, msg);
+          await applyCooldown(c.env.DB, jwt, 500);
+        }
         if (attempt < maxRetry - 1) continue;
       }
     }

@@ -197,6 +197,29 @@ function base64UrlEncodeString(input: string): string {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
+function base64UrlDecodeString(input: string): string {
+  const s = String(input || "").replace(/-/g, "+").replace(/_/g, "/");
+  const pad = s.length % 4 === 0 ? "" : "=".repeat(4 - (s.length % 4));
+  const binary = atob(s + pad);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
+function decodeURIComponentLoose(input: string): string {
+  let current = String(input || "");
+  for (let i = 0; i < 2; i += 1) {
+    try {
+      const next = decodeURIComponent(current);
+      if (next === current) break;
+      current = next;
+    } catch {
+      break;
+    }
+  }
+  return current;
+}
+
 function encodeAssetPath(raw: string): string {
   try {
     const u = new URL(raw);
@@ -533,6 +556,47 @@ function normalizeWorkflowImageInput(raw: string, origin: string): string {
   try {
     const resolved = new URL(value, origin);
     const pathname = String(resolved.pathname || "/");
+    const imageProxyPrefix = "/images/";
+    const galleryPrefix = "/api/v1/imagine/gallery/file/";
+
+    if (pathname.startsWith(imageProxyPrefix)) {
+      const encoded = pathname.slice(imageProxyPrefix.length);
+      if (encoded.startsWith("u_")) {
+        try {
+          const decodedUrl = new URL(base64UrlDecodeString(encoded.slice(2)), origin);
+          const decodedPath = String(decodedUrl.pathname || "/");
+          if (decodedPath.startsWith(galleryPrefix)) {
+            const tail = decodeURIComponentLoose(decodedPath.slice(galleryPrefix.length));
+            decodedUrl.pathname = `${galleryPrefix}${encodeURIComponent(tail)}`;
+          }
+          if (decodedUrl.origin === origin) return decodedUrl.toString();
+          if (isAllowedUpstreamAssetHost(decodedUrl.hostname)) {
+            return toProxyUrl(origin, encodeAssetPath(decodedUrl.toString()));
+          }
+        } catch {
+          // ignore stale proxy decode failures
+        }
+      } else if (encoded.startsWith("p_")) {
+        try {
+          const decodedPathRaw = base64UrlDecodeString(encoded.slice(2));
+          const decodedPath = decodedPathRaw.startsWith("/") ? decodedPathRaw : `/${decodedPathRaw}`;
+          if (decodedPath.startsWith(galleryPrefix)) {
+            const tail = decodeURIComponentLoose(decodedPath.slice(galleryPrefix.length));
+            return new URL(`${galleryPrefix}${encodeURIComponent(tail)}`, origin).toString();
+          }
+        } catch {
+          // ignore stale proxy decode failures
+        }
+      }
+      return resolved.toString();
+    }
+
+    if (pathname.startsWith(galleryPrefix)) {
+      const tail = decodeURIComponentLoose(pathname.slice(galleryPrefix.length));
+      resolved.pathname = `${galleryPrefix}${encodeURIComponent(tail)}`;
+      return resolved.toString();
+    }
+
     if (pathname.startsWith("/images/")) {
       return resolved.toString();
     }

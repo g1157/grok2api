@@ -59,13 +59,9 @@ def _normalize_asset_url(raw: str) -> str:
         parsed_path = parsed.path or ""
 
     if parsed_path.startswith(LOCAL_IMAGE_PREFIX):
-        suffix = parsed_path[len(LOCAL_IMAGE_PREFIX) :]
-        if not suffix:
-            return ""
-        # Locally uploaded images (upload-*) are not assets.grok.com paths.
-        if suffix.startswith("upload-"):
-            return ""
-        return f"{ASSET_HOST}/{suffix.lstrip('/')}"
+        # Local cache image paths are not guaranteed to exist on assets.grok.com.
+        # Force upload flow to avoid upstream 404.
+        return ""
 
     if parsed_path.startswith("/") and not parsed_path.startswith("/v1/files/"):
         # Local API/admin paths are not assets.grok.com direct paths.

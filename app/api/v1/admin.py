@@ -887,6 +887,84 @@ async def admin_imagine_page():
     """Imagine 生图页"""
     return await render_template("imagine/imagine.html")
 
+
+_IMAGINE_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
+
+
+def _safe_imagine_name(name: str) -> str:
+    value = Path(str(name or "").strip()).name
+    if not value:
+        raise HTTPException(status_code=400, detail="Missing file name")
+    return value
+
+
+def _get_imagine_gallery_dir() -> Path:
+    from app.services.imagine.client import IMAGE_DIR
+
+    return IMAGE_DIR
+
+
+def _get_imagine_local_stats() -> dict:
+    gallery_dir = _get_imagine_gallery_dir()
+    if not gallery_dir.exists():
+        return {"count": 0, "size_mb": 0.0}
+    files = [f for f in gallery_dir.glob("*") if f.is_file() and f.suffix.lower() in _IMAGINE_IMAGE_EXTS]
+    total_size = sum(f.stat().st_size for f in files)
+    return {"count": len(files), "size_mb": round(total_size / 1024 / 1024, 2)}
+
+
+def _list_imagine_local_files(page: int = 1, page_size: int = 1000) -> dict:
+    gallery_dir = _get_imagine_gallery_dir()
+    if not gallery_dir.exists():
+        return {"total": 0, "page": page, "page_size": page_size, "items": []}
+    files = [f for f in gallery_dir.glob("*") if f.is_file() and f.suffix.lower() in _IMAGINE_IMAGE_EXTS]
+    items = []
+    for f in files:
+        stat = f.stat()
+        items.append(
+            {
+                "name": f.name,
+                "size_bytes": stat.st_size,
+                "mtime_ms": int(stat.st_mtime * 1000),
+                "view_url": f"/api/v1/imagine/gallery/file/{f.name}",
+            }
+        )
+    items.sort(key=lambda x: x["mtime_ms"], reverse=True)
+    total = len(items)
+    start = max(0, (page - 1) * page_size)
+    end = start + page_size
+    return {"total": total, "page": page, "page_size": page_size, "items": items[start:end]}
+
+
+def _clear_imagine_local_files() -> dict:
+    gallery_dir = _get_imagine_gallery_dir()
+    if not gallery_dir.exists():
+        return {"count": 0, "size_mb": 0.0}
+    files = [f for f in gallery_dir.glob("*") if f.is_file() and f.suffix.lower() in _IMAGINE_IMAGE_EXTS]
+    total_size = sum(f.stat().st_size for f in files)
+    deleted = 0
+    for f in files:
+        try:
+            f.unlink()
+            deleted += 1
+        except Exception:
+            continue
+    return {"count": deleted, "size_mb": round(total_size / 1024 / 1024, 2)}
+
+
+def _delete_imagine_local_file(name: str) -> dict:
+    safe_name = _safe_imagine_name(name)
+    gallery_dir = _get_imagine_gallery_dir()
+    target = gallery_dir / safe_name
+    if not target.exists() or not target.is_file():
+        return {"deleted": False}
+    try:
+        target.unlink()
+        return {"deleted": True}
+    except Exception:
+        return {"deleted": False}
+
+
 @router.get("/api/v1/admin/cache", dependencies=[Depends(verify_api_key)])
 async def get_cache_stats_api(request: Request):
     """获取缓存统计"""
@@ -897,6 +975,7 @@ async def get_cache_stats_api(request: Request):
         dl_service = DownloadService()
         image_stats = dl_service.get_stats("image")
         video_stats = dl_service.get_stats("video")
+        imagine_stats = _get_imagine_local_stats()
         
         mgr = await get_token_manager()
         pools = mgr.pools
@@ -1005,6 +1084,7 @@ async def get_cache_stats_api(request: Request):
         return {
             "local_image": image_stats,
             "local_video": video_stats,
+            "local_imagine": imagine_stats,
             "online": online_stats,
             "online_accounts": accounts,
             "online_scope": scope or "none",
@@ -1017,11 +1097,14 @@ async def get_cache_stats_api(request: Request):
 async def clear_local_cache_api(data: dict):
     """清理本地缓存"""
     from app.services.grok.assets import DownloadService
-    cache_type = data.get("type", "image")
+    cache_type = str(data.get("type", "image")).strip().lower()
     
     try:
-        dl_service = DownloadService()
-        result = dl_service.clear(cache_type)
+        if cache_type == "imagine":
+            result = _clear_imagine_local_files()
+        else:
+            dl_service = DownloadService()
+            result = dl_service.clear(cache_type)
         return {"status": "success", "result": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -1037,9 +1120,14 @@ async def list_local_cache_api(
     from app.services.grok.assets import DownloadService
     try:
         if type_:
-            cache_type = type_
-        dl_service = DownloadService()
-        result = dl_service.list_files(cache_type, page, page_size)
+            cache_type = str(type_).strip().lower()
+        else:
+            cache_type = str(cache_type).strip().lower()
+        if cache_type == "imagine":
+            result = _list_imagine_local_files(page, page_size)
+        else:
+            dl_service = DownloadService()
+            result = dl_service.list_files(cache_type, page, page_size)
         return {"status": "success", **result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -1048,13 +1136,16 @@ async def list_local_cache_api(
 async def delete_local_cache_item_api(data: dict):
     """删除单个本地缓存文件"""
     from app.services.grok.assets import DownloadService
-    cache_type = data.get("type", "image")
+    cache_type = str(data.get("type", "image")).strip().lower()
     name = data.get("name")
     if not name:
         raise HTTPException(status_code=400, detail="Missing file name")
     try:
-        dl_service = DownloadService()
-        result = dl_service.delete_file(cache_type, name)
+        if cache_type == "imagine":
+            result = _delete_imagine_local_file(name)
+        else:
+            dl_service = DownloadService()
+            result = dl_service.delete_file(cache_type, name)
         return {"status": "success", "result": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -1185,7 +1276,8 @@ async def get_cache_local_stats_api():
         dl_service = DownloadService()
         image_stats = dl_service.get_stats("image")
         video_stats = dl_service.get_stats("video")
-        return {"local_image": image_stats, "local_video": video_stats}
+        imagine_stats = _get_imagine_local_stats()
+        return {"local_image": image_stats, "local_video": video_stats, "local_imagine": imagine_stats}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

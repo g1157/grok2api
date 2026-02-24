@@ -363,7 +363,38 @@ function renderContent(container, content, forceText) {
     return;
   }
   container.innerHTML = html;
-  bindRetryableImages(container);
+  normalizeVideoElements(container);
+  if (container.closest('#panel-chat')) {
+    hideImagesInChatPanel(container);
+  } else {
+    bindRetryableImages(container);
+  }
+}
+
+function normalizeVideoElements(container) {
+  if (!container) return;
+  container.querySelectorAll('video').forEach((videoEl) => {
+    videoEl.querySelectorAll('br').forEach((br) => br.remove());
+    if (!videoEl.hasAttribute('controls')) videoEl.setAttribute('controls', '');
+    if (!videoEl.hasAttribute('preload')) videoEl.setAttribute('preload', 'metadata');
+    const src = String(videoEl.getAttribute('src') || '').trim();
+    if (src) videoEl.setAttribute('src', toAbsoluteUrl(src));
+    videoEl.querySelectorAll('source').forEach((sourceEl) => {
+      const sourceSrc = String(sourceEl.getAttribute('src') || '').trim();
+      if (!sourceSrc) return;
+      sourceEl.setAttribute('src', toAbsoluteUrl(sourceSrc));
+    });
+  });
+}
+
+function hideImagesInChatPanel(container) {
+  if (!container) return;
+  container.querySelectorAll('img').forEach((img) => {
+    const tip = document.createElement('span');
+    tip.className = 'chat-image-hidden';
+    tip.textContent = '[图片已隐藏]';
+    img.replaceWith(tip);
+  });
 }
 
 async function init() {
@@ -675,11 +706,14 @@ function renderVideoClips() {
     return;
   }
   workflowState.videoClips.forEach((clip) => {
-    const row = document.createElement('label');
+    const row = document.createElement('div');
     row.className = 'clip-row';
     row.innerHTML = `
       <input type="checkbox" class="checkbox" ${clip.selected !== false ? 'checked' : ''} />
-      <a href="${clip.url}" target="_blank" rel="noopener noreferrer">${escapeHtml(clip.url)}</a>
+      <div class="clip-content">
+        <video controls preload="metadata" src="${escapeHtml(clip.url)}"></video>
+        <a href="${escapeHtml(clip.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(clip.url)}</a>
+      </div>
     `;
     row.querySelector('input')?.addEventListener('change', (e) => {
       clip.selected = Boolean(e.target?.checked);
@@ -756,13 +790,27 @@ function setImagineTabProgress(show, percent = 0, stage = '', status = '') {
 function normalizeImagineGalleryUrl(rawUrl, filename) {
   const raw = String(rawUrl || '').trim();
   const name = String(filename || '').trim();
-  if (raw) {
-    if (raw.startsWith('/api/v1/imagine/gallery/') && !raw.startsWith('/api/v1/imagine/gallery/file/')) {
-      const suffix = raw.slice('/api/v1/imagine/gallery/'.length);
-      if (suffix && !suffix.includes('/')) {
-        return `/api/v1/imagine/gallery/file/${suffix}`;
-      }
+  const rewritePath = (path) => {
+    if (!path.startsWith('/api/v1/imagine/gallery/') || path.startsWith('/api/v1/imagine/gallery/file/')) {
+      return path;
     }
+    const suffix = path.slice('/api/v1/imagine/gallery/'.length);
+    if (!suffix || suffix.includes('/')) return path;
+    return `/api/v1/imagine/gallery/file/${suffix}`;
+  };
+  if (raw) {
+    if (raw.startsWith('http://') || raw.startsWith('https://')) {
+      try {
+        const u = new URL(raw);
+        const rewritten = rewritePath(u.pathname || '');
+        if (rewritten !== (u.pathname || '')) {
+          u.pathname = rewritten;
+          return u.toString();
+        }
+      } catch (e) {}
+    }
+    const relRewritten = rewritePath(raw);
+    if (relRewritten !== raw) return relRewritten;
     return raw;
   }
   if (name) return `/api/v1/imagine/gallery/file/${encodeURIComponent(name)}`;
@@ -879,7 +927,7 @@ async function loadImagineTabGallery(silent = true) {
 }
 
 async function refreshImagineTabData(silent = true) {
-  await Promise.all([loadImagineTabSsoStatus(silent), loadImagineTabGallery(silent)]);
+  await loadImagineTabGallery(silent);
 }
 
 function syncImagineTabImage(src) {
@@ -1190,6 +1238,13 @@ async function refreshWorkflowNsfw() {
 
 function extractVideoUrlsFromContent(content) {
   const urls = [];
+  const pushUrl = (raw) => {
+    const value = String(raw || '').trim();
+    if (!value) return;
+    const absolute = toAbsoluteUrl(value);
+    if (!absolute) return;
+    if (!urls.includes(absolute)) urls.push(absolute);
+  };
   const html = String(content || '').trim();
   if (!html) return urls;
   const doc = new DOMParser().parseFromString(`<div>${html}</div>`, 'text/html');
@@ -1197,11 +1252,16 @@ function extractVideoUrlsFromContent(content) {
     let raw = '';
     if (el.tagName.toUpperCase() === 'A') raw = String(el.getAttribute('href') || '').trim();
     else raw = String(el.getAttribute('src') || '').trim();
-    if (!raw) return;
-    const absolute = toAbsoluteUrl(raw);
-    if (!absolute) return;
-    if (!urls.includes(absolute)) urls.push(absolute);
+    pushUrl(raw);
   });
+  const markdownRegex = /\[[^\]]*]\((https?:\/\/[^\s)]+|\/[^\s)]+)\)/gi;
+  for (const m of html.matchAll(markdownRegex)) {
+    pushUrl(m[1]);
+  }
+  const plainUrlRegex = /(https?:\/\/[^\s"'<>]+|\/v1\/files\/video\/[^\s"'<>]+)/gi;
+  for (const m of html.matchAll(plainUrlRegex)) {
+    pushUrl(m[1]);
+  }
   return urls;
 }
 

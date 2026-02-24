@@ -6,7 +6,8 @@ const accountMap = new Map();
 const selectedTokens = new Set();
 const selectedLocal = {
   image: new Set(),
-  video: new Set()
+  video: new Set(),
+  imagine: new Set()
 };
 const ui = {};
 const loadFailed = new Map();
@@ -17,8 +18,30 @@ let isLocalDeleting = false;
 let localStatsTimer = null;
 const cacheListState = {
   image: { loaded: false, visible: false, items: [] },
-  video: { loaded: false, visible: false, items: [] }
+  video: { loaded: false, visible: false, items: [] },
+  imagine: { loaded: false, visible: false, items: [] }
 };
+
+function getLocalBody(type) {
+  if (type === 'image') return ui.localImageBody;
+  if (type === 'video') return ui.localVideoBody;
+  if (type === 'imagine') return ui.localImagineBody;
+  return null;
+}
+
+function getLocalList(type) {
+  if (type === 'image') return ui.localImageList;
+  if (type === 'video') return ui.localVideoList;
+  if (type === 'imagine') return ui.localImagineList;
+  return null;
+}
+
+function getLocalSelectAll(type) {
+  if (type === 'image') return ui.localImageSelectAll;
+  if (type === 'video') return ui.localVideoSelectAll;
+  if (type === 'imagine') return ui.localImagineSelectAll;
+  return null;
+}
 
 async function init() {
   apiKey = await ensureApiKey();
@@ -68,6 +91,8 @@ async function refreshLocalStats() {
     if (ui.imgSize) ui.imgSize.textContent = `${data.local_image.size_mb} MB`;
     if (ui.videoCount) ui.videoCount.textContent = data.local_video.count;
     if (ui.videoSize) ui.videoSize.textContent = `${data.local_video.size_mb} MB`;
+    if (ui.imagineCount) ui.imagineCount.textContent = data.local_imagine?.count ?? 0;
+    if (ui.imagineSize) ui.imagineSize.textContent = `${data.local_imagine?.size_mb ?? 0} MB`;
   } catch (e) {
     // silent
   }
@@ -88,6 +113,8 @@ function cacheUI() {
   ui.imgSize = document.getElementById('img-size');
   ui.videoCount = document.getElementById('video-count');
   ui.videoSize = document.getElementById('video-size');
+  ui.imagineCount = document.getElementById('imagine-count');
+  ui.imagineSize = document.getElementById('imagine-size');
   ui.onlineCount = document.getElementById('online-count');
   ui.onlineStatus = document.getElementById('online-status');
   ui.onlineLastClear = document.getElementById('online-last-clear');
@@ -96,6 +123,7 @@ function cacheUI() {
   ui.selectAll = document.getElementById('select-all');
   ui.localImageSelectAll = document.getElementById('local-image-select-all');
   ui.localVideoSelectAll = document.getElementById('local-video-select-all');
+  ui.localImagineSelectAll = document.getElementById('local-imagine-select-all');
   ui.selectedCount = document.getElementById('selected-count');
   ui.batchActions = document.getElementById('batch-actions');
   ui.loadBtn = document.getElementById('btn-load-stats');
@@ -103,8 +131,10 @@ function cacheUI() {
   ui.localCacheLists = document.getElementById('local-cache-lists');
   ui.localImageList = document.getElementById('local-image-list');
   ui.localVideoList = document.getElementById('local-video-list');
+  ui.localImagineList = document.getElementById('local-imagine-list');
   ui.localImageBody = document.getElementById('local-image-body');
   ui.localVideoBody = document.getElementById('local-video-body');
+  ui.localImagineBody = document.getElementById('local-imagine-body');
   ui.cacheCards = document.querySelectorAll('.cache-card');
   ui.onlineAssetsTable = document.getElementById('online-assets-table');
   ui.batchProgress = document.getElementById('batch-progress');
@@ -269,6 +299,8 @@ async function loadStats(options = {}) {
     if (ui.imgSize) ui.imgSize.textContent = `${data.local_image.size_mb} MB`;
     if (ui.videoCount) ui.videoCount.textContent = data.local_video.count;
     if (ui.videoSize) ui.videoSize.textContent = `${data.local_video.size_mb} MB`;
+    if (ui.imagineCount) ui.imagineCount.textContent = data.local_imagine?.count ?? 0;
+    if (ui.imagineSize) ui.imagineSize.textContent = `${data.local_imagine?.size_mb ?? 0} MB`;
     if (ui.onlineCount) ui.onlineCount.textContent = data.online.count;
 
     const statusEl = ui.onlineStatus;
@@ -459,7 +491,8 @@ function renderAccountTable(data) {
 }
 
 async function clearCache(type) {
-  const ok = await confirmAction(`确定要清空本地${type === 'image' ? '图片' : '视频'}缓存吗？`, { okText: '清空' });
+  const typeLabel = type === 'image' ? '图片' : (type === 'video' ? '视频' : 'Imagine 图片');
+  const ok = await confirmAction(`确定要清空本地${typeLabel}缓存吗？`, { okText: '清空' });
   if (!ok) return;
 
   try {
@@ -540,7 +573,7 @@ function toggleLocalSelectAll(type, checkbox) {
 }
 
 function syncLocalRowCheckboxes(type) {
-  const body = type === 'image' ? ui.localImageBody : ui.localVideoBody;
+  const body = getLocalBody(type);
   if (!body) return;
   const set = selectedLocal[type];
   const checkboxes = body.querySelectorAll('input[type="checkbox"].checkbox');
@@ -555,7 +588,7 @@ function syncLocalRowCheckboxes(type) {
 }
 
 function syncLocalSelectAllState(type) {
-  const selectAll = type === 'image' ? ui.localImageSelectAll : ui.localVideoSelectAll;
+  const selectAll = getLocalSelectAll(type);
   if (!selectAll) return;
   const total = cacheListState[type]?.items?.length || 0;
   const selected = selectedLocal[type]?.size || 0;
@@ -731,11 +764,13 @@ async function showCacheSection(type) {
   if (type === 'image') {
     cacheListState.image.visible = true;
     cacheListState.video.visible = false;
+    cacheListState.imagine.visible = false;
     if (cacheListState.image.loaded) renderLocalCacheList('image', cacheListState.image.items);
     else await loadLocalCacheList('image');
     if (ui.localCacheLists) ui.localCacheLists.classList.remove('hidden');
     if (ui.localImageList) ui.localImageList.classList.remove('hidden');
     if (ui.localVideoList) ui.localVideoList.classList.add('hidden');
+    if (ui.localImagineList) ui.localImagineList.classList.add('hidden');
     if (ui.onlineAssetsTable) ui.onlineAssetsTable.classList.add('hidden');
     updateToolbarForSection();
     return;
@@ -743,11 +778,27 @@ async function showCacheSection(type) {
   if (type === 'video') {
     cacheListState.video.visible = true;
     cacheListState.image.visible = false;
+    cacheListState.imagine.visible = false;
     if (cacheListState.video.loaded) renderLocalCacheList('video', cacheListState.video.items);
     else await loadLocalCacheList('video');
     if (ui.localCacheLists) ui.localCacheLists.classList.remove('hidden');
     if (ui.localVideoList) ui.localVideoList.classList.remove('hidden');
     if (ui.localImageList) ui.localImageList.classList.add('hidden');
+    if (ui.localImagineList) ui.localImagineList.classList.add('hidden');
+    if (ui.onlineAssetsTable) ui.onlineAssetsTable.classList.add('hidden');
+    updateToolbarForSection();
+    return;
+  }
+  if (type === 'imagine') {
+    cacheListState.imagine.visible = true;
+    cacheListState.image.visible = false;
+    cacheListState.video.visible = false;
+    if (cacheListState.imagine.loaded) renderLocalCacheList('imagine', cacheListState.imagine.items);
+    else await loadLocalCacheList('imagine');
+    if (ui.localCacheLists) ui.localCacheLists.classList.remove('hidden');
+    if (ui.localImagineList) ui.localImagineList.classList.remove('hidden');
+    if (ui.localImageList) ui.localImageList.classList.add('hidden');
+    if (ui.localVideoList) ui.localVideoList.classList.add('hidden');
     if (ui.onlineAssetsTable) ui.onlineAssetsTable.classList.add('hidden');
     updateToolbarForSection();
     return;
@@ -755,9 +806,11 @@ async function showCacheSection(type) {
   if (type === 'online') {
     cacheListState.image.visible = false;
     cacheListState.video.visible = false;
+    cacheListState.imagine.visible = false;
     if (ui.localCacheLists) ui.localCacheLists.classList.add('hidden');
     if (ui.localImageList) ui.localImageList.classList.add('hidden');
     if (ui.localVideoList) ui.localVideoList.classList.add('hidden');
+    if (ui.localImagineList) ui.localImagineList.classList.add('hidden');
     if (ui.onlineAssetsTable) ui.onlineAssetsTable.classList.remove('hidden');
     updateToolbarForSection();
   }
@@ -768,7 +821,7 @@ async function toggleCacheList(type) {
 }
 
 async function loadLocalCacheList(type) {
-  const body = type === 'image' ? ui.localImageBody : ui.localVideoBody;
+  const body = getLocalBody(type);
   if (!body) return;
   body.innerHTML = `<tr><td colspan="5">加载中...</td></tr>`;
   try {
@@ -796,7 +849,7 @@ async function loadLocalCacheList(type) {
 }
 
 function renderLocalCacheList(type, items) {
-  const body = type === 'image' ? ui.localImageBody : ui.localVideoBody;
+  const body = getLocalBody(type);
   if (!body) return;
   if (!items || items.length === 0) {
     body.innerHTML = `<tr><td colspan="5">暂无文件</td></tr>`;
@@ -847,7 +900,9 @@ function renderLocalCacheList(type, items) {
 
 function viewLocalFile(type, name) {
   const safeName = encodeURIComponent(name);
-  const url = type === 'image' ? `/v1/files/image/${safeName}` : `/v1/files/video/${safeName}`;
+  let url = `/v1/files/video/${safeName}`;
+  if (type === 'image') url = `/v1/files/image/${safeName}`;
+  if (type === 'imagine') url = `/api/v1/imagine/gallery/file/${safeName}`;
   window.open(url, '_blank');
 }
 

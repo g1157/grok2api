@@ -155,7 +155,14 @@ class GrokImagineClient:
                     logger.warning(f"[Imagine] Error: {err_code} - {err_msg}")
                     if stream_callback:
                         stream_callback("error", {"message": f"{err_code}: {err_msg}", "code": err_code})
-                    if err_code == "rate_limit_exceeded":
+                    err_code_lower = err_code.lower()
+                    err_msg_lower = err_msg.lower()
+                    if (
+                        err_code_lower == "rate_limit_exceeded"
+                        or "session_expired" in err_code_lower
+                        or "session expired" in err_msg_lower
+                        or "会话已过期" in err_msg
+                    ):
                         break
                     continue
 

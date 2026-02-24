@@ -433,7 +433,7 @@
 
 .imagine-tab-actions {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
   padding: 8px;
   border-top: 1px solid var(--border);

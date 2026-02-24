@@ -207,6 +207,12 @@ function encodeAssetPath(raw: string): string {
   }
 }
 
+function isAllowedUpstreamAssetHost(hostname: string): boolean {
+  const h = String(hostname || "").trim().toLowerCase();
+  if (!h) return false;
+  return h === "assets.grok.com" || h === "grok.com" || h.endsWith(".grok.com") || h.endsWith(".x.ai");
+}
+
 function toProxyUrl(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/$/, "")}/images/${path}`;
 }
@@ -525,7 +531,15 @@ function normalizeWorkflowImageInput(raw: string, origin: string): string {
   if (!value) return "";
   if (value.startsWith("data:image/")) return value;
   try {
-    return new URL(value, origin).toString();
+    const resolved = new URL(value, origin);
+    const pathname = String(resolved.pathname || "/");
+    if (pathname.startsWith("/images/")) {
+      return resolved.toString();
+    }
+    if (isAllowedUpstreamAssetHost(resolved.hostname)) {
+      return toProxyUrl(origin, encodeAssetPath(resolved.toString()));
+    }
+    return resolved.toString();
   } catch {
     return value;
   }

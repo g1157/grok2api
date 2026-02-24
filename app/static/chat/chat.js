@@ -925,6 +925,39 @@ function setImagineTabProgress(show, percent = 0, stage = '', status = '') {
   if (statusEl) statusEl.textContent = status || '';
 }
 
+function base64UrlEncodeUtf8(input) {
+  const bytes = new TextEncoder().encode(String(input || ''));
+  let binary = '';
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function isAllowedUpstreamMediaHost(hostname) {
+  const h = String(hostname || '').trim().toLowerCase();
+  if (!h) return false;
+  return h === 'assets.grok.com' || h === 'grok.com' || h.endsWith('.grok.com') || h.endsWith('.x.ai');
+}
+
+function encodeAssetProxyPath(raw) {
+  const value = String(raw || '').trim();
+  if (!value) return '';
+  if (value.startsWith('/images/')) return '';
+  try {
+    const u = new URL(value);
+    if (!isAllowedUpstreamMediaHost(u.hostname)) return '';
+    return `u_${base64UrlEncodeUtf8(u.toString())}`;
+  } catch (_) {
+    if (value.startsWith('/api/v1/imagine/gallery/file/')) return '';
+    const path = value.startsWith('/') ? value : `/${value}`;
+    return `p_${base64UrlEncodeUtf8(path)}`;
+  }
+}
+
+function toLocalMediaProxyUrl(raw) {
+  const encoded = encodeAssetProxyPath(raw);
+  return encoded ? `/images/${encoded}` : '';
+}
+
 function normalizeImagineGalleryUrl(rawUrl, filename) {
   const raw = String(rawUrl || '').trim();
   const name = String(filename || '').trim();
@@ -941,17 +974,21 @@ function normalizeImagineGalleryUrl(rawUrl, filename) {
       try {
         const u = new URL(raw);
         const rewritten = rewritePath(u.pathname || '');
-        if (rewritten !== (u.pathname || '')) {
-          u.pathname = rewritten;
-          return u.toString();
-        }
+        if (rewritten !== (u.pathname || '')) u.pathname = rewritten;
+        const proxied = toLocalMediaProxyUrl(u.toString());
+        if (proxied) return proxied;
+        return u.toString();
       } catch (e) {}
     }
     const relRewritten = rewritePath(raw);
-    if (relRewritten !== raw) return relRewritten;
-    return raw;
+    const proxied = toLocalMediaProxyUrl(relRewritten);
+    if (proxied) return proxied;
+    return relRewritten;
   }
-  if (name) return `/api/v1/imagine/gallery/file/${encodeURIComponent(name)}`;
+  if (name) {
+    const fallback = `/api/v1/imagine/gallery/file/${encodeURIComponent(name)}`;
+    return toLocalMediaProxyUrl(fallback) || fallback;
+  }
   return '';
 }
 
@@ -1034,7 +1071,9 @@ async function loadImagineTabGallery(silent = true) {
               <div class="imagine-tab-card${active ? ' is-active' : ''}">
                 <img alt="imagine-image" src="${escapeHtml(src)}" onclick="openImaginePreview(decodeURIComponent('${encodedSrc}'))" />
                 <div class="imagine-tab-actions">
-                  <button type="button" onclick="syncImagineTabImage(decodeURIComponent('${encodedSrc}'))">设为工作图</button>
+                  <button type="button" onclick="syncImagineTabImage(decodeURIComponent('${encodedSrc}'))">选中工作图</button>
+                  <button type="button" onclick="goImagineTabEdit(decodeURIComponent('${encodedSrc}'))">去编辑</button>
+                  <button type="button" onclick="goImagineTabVideo(decodeURIComponent('${encodedSrc}'))">去视频</button>
                   <button type="button" onclick="deleteImagineTabImage(decodeURIComponent('${encodedName}'))">删除</button>
                 </div>
               </div>
@@ -1062,11 +1101,22 @@ async function refreshImagineTabData(silent = true) {
   await loadImagineTabGallery(silent);
 }
 
-function syncImagineTabImage(src) {
+function syncImagineTabImage(src, silent = false) {
   const value = toAbsoluteUrl(src);
   if (!value) return;
   setWorkflowSelection(value, 'imagine-gallery', true);
-  showToast('已设为工作图', 'success');
+  loadImagineTabGallery(true);
+  if (!silent) showToast('已设为工作图', 'success');
+}
+
+function goImagineTabEdit(src) {
+  syncImagineTabImage(src, true);
+  switchTab('edit');
+}
+
+function goImagineTabVideo(src) {
+  syncImagineTabImage(src, true);
+  switchTab('video');
 }
 
 async function deleteImagineTabImage(name) {
@@ -2418,7 +2468,8 @@ async function sourceToImageFile(src) {
   if (value.startsWith('data:image/')) {
     blob = dataUrlToBlob(value);
   } else {
-    const res = await fetch(value, { cache: 'no-store' });
+    const normalized = toAbsoluteUrl(normalizeImagineGalleryUrl(value, '')) || value;
+    const res = await fetch(normalized, { cache: 'no-store', headers: buildApiHeaders() });
     if (!res.ok) throw new Error(`Load image failed (${res.status})`);
     blob = await res.blob();
   }

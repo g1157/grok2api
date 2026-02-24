@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Env } from "../env";
-import { requireAdminAuth } from "../auth";
+import { requireAdminAuth, requireAdminOrApiAuth } from "../auth";
 import {
   getSettings,
   saveSettings,
@@ -1545,7 +1545,7 @@ adminRoutes.post("/api/cache/clear/videos", requireAdminAuth, async (c) => {
 
 // ============== Imagine Standalone Routes ==============
 
-adminRoutes.post("/api/v1/imagine/generate", requireAdminAuth, async (c) => {
+adminRoutes.post("/api/v1/imagine/generate", requireAdminOrApiAuth, async (c) => {
   try {
     const body = (await c.req.json()) as {
       prompt?: string;
@@ -1659,7 +1659,7 @@ adminRoutes.post("/api/v1/imagine/sso/reset", requireAdminAuth, async (c) => {
   return c.json({ success: true, message: "SSO state reset" });
 });
 
-adminRoutes.get("/api/v1/imagine/gallery", requireAdminAuth, async (c) => {
+adminRoutes.get("/api/v1/imagine/gallery", requireAdminOrApiAuth, async (c) => {
   try {
     const items = await listImagineGallery(c.env);
     return c.json({ success: true, data: items, total: items.length });

@@ -72,3 +72,20 @@ export const requireAdminAuth: MiddlewareHandler<{ Bindings: Env }> = async (c, 
   return next();
 };
 
+// Used by Imagine chat/standalone endpoints so both /chat(API key) and /admin/chat(admin session) can work.
+export const requireAdminOrApiAuth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
+  const token = bearerToken(c.req.header("Authorization") ?? null);
+  if (!token) return c.json({ error: "缺少认证令牌", code: "MISSING_AUTH" }, 401);
+
+  const adminOk = await verifyAdminSession(c.env.DB, token);
+  if (adminOk) return next();
+
+  const settings = await getSettings(c.env);
+  const globalKey = (settings.grok.api_key ?? "").trim();
+  if (globalKey && token === globalKey) return next();
+
+  const keyInfo = await validateApiKey(c.env.DB, token);
+  if (keyInfo) return next();
+
+  return c.json({ error: "会话已过期", code: "SESSION_EXPIRED" }, 401);
+};

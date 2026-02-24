@@ -2558,9 +2558,13 @@ async function generateVideo() {
   if (!prompt) return showToast('请输入 prompt', 'warning');
 
   const model = String(q('model-select').value || 'grok-imagine-1.0-video').trim();
-  const stream = Boolean(q('stream-toggle').checked);
+  const streamRequested = Boolean(q('stream-toggle').checked);
+  const stream = false;
   const headers = { ...buildApiHeaders(), 'Content-Type': 'application/json' };
   if (!headers.Authorization) return showToast('请先填写 API Key', 'warning');
+  if (streamRequested) {
+    showToast('视频任务已自动切换为非流式，以提高成功率', 'info');
+  }
 
   const videoConfig = {
     aspect_ratio: String(q('video-aspect').value || '3:2'),

@@ -114,6 +114,12 @@ function normalizeGeneratedAssetUrls(input: unknown): string[] {
   return out;
 }
 
+function isFailedToRespondMessage(raw: unknown): boolean {
+  const msg = String(raw ?? "").trim().toLowerCase();
+  if (!msg) return false;
+  return msg === "failed to respond" || msg === "failed to respond." || msg.includes("failed to respond");
+}
+
 export function createOpenAiStreamFromGrokNdjson(
   grokResp: Response,
   opts: {
@@ -442,6 +448,7 @@ export async function parseOpenAiFromGrokNdjson(
   opts: { cookie: string; settings: GrokSettings; global: GlobalSettings; origin: string; requestedModel: string },
 ): Promise<Record<string, unknown>> {
   const { global, origin, requestedModel, settings } = opts;
+  const isVideoRequested = /imagine-1\.0-video/i.test(String(requestedModel || ""));
   const text = await grokResp.text();
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
 
@@ -492,7 +499,12 @@ export async function parseOpenAiFromGrokNdjson(
     if (typeof modelResp.error === "string" && modelResp.error) throw new Error(modelResp.error);
 
     if (typeof modelResp.model === "string" && modelResp.model) model = modelResp.model;
-    if (typeof modelResp.message === "string") content = modelResp.message;
+    if (typeof modelResp.message === "string") {
+      const message = String(modelResp.message);
+      if (!(isVideoRequested && isFailedToRespondMessage(message))) {
+        content = message;
+      }
+    }
 
     const rawUrls = modelResp.generatedImageUrls;
     const urls = normalizeGeneratedAssetUrls(rawUrls);
@@ -509,7 +521,9 @@ export async function parseOpenAiFromGrokNdjson(
     if (Array.isArray(rawUrls)) continue;
 
     // For normal chat replies, the first modelResponse is enough.
-    break;
+    // For video, keep scanning: upstream may emit transient "Failed to respond."
+    // before later frames include valid streamingVideoGenerationResponse videoUrl.
+    if (!isVideoRequested) break;
   }
 
   if (bestVideo?.src) {
@@ -519,6 +533,9 @@ export async function parseOpenAiFromGrokNdjson(
       ...(bestVideo.poster ? { posterUrl: bestVideo.poster } : {}),
     });
     model = requestedModel;
+  } else if (isVideoRequested && isFailedToRespondMessage(content)) {
+    // Promote transient upstream text error to retryable exception in route layer.
+    throw new Error(content || "Failed to respond.");
   }
 
   return {

@@ -17,6 +17,7 @@ let isNsfwRefreshAllRunning = false;
 let isBatchNsfwRunning = false;
 let imaginePoolStatus = { total: 0, available: 0, tokens: [] };
 let imagineStatusByMasked = new Map();
+let batchNsfwStats = { success: 0, failed: 0, invalidated: 0 };
 
 let displayTokens = [];
 const filterState = {
@@ -246,6 +247,103 @@ function normalizeTokenRecord(pool, raw) {
 function isTokenNsfwEnabled(item) {
   const tags = item && Array.isArray(item.tags) ? item.tags : [];
   return tags.some((t) => String(t || '').trim().toLowerCase() === 'nsfw');
+}
+
+function uniqueNormalizedTokensFromItems(items) {
+  const out = [];
+  const seen = new Set();
+  for (const item of items || []) {
+    const tokenRaw = (typeof item === 'string') ? item : (item && item.token);
+    const token = normalizeSsoToken(tokenRaw);
+    if (!token || seen.has(token)) continue;
+    seen.add(token);
+    out.push(token);
+  }
+  return out;
+}
+
+function getNsfwBatchSize() {
+  // Cloudflare Workers has strict per-request runtime/subrequest limits.
+  // Keep this conservative so batch NSFW works for large token sets.
+  return isWorkersRuntime ? 8 : BATCH_SIZE;
+}
+
+async function startBatchNsfwWithTokens(tokens, options = {}) {
+  if (isBatchProcessing || isBatchNsfwRunning) {
+    showToast('当前有任务进行中', 'info');
+    return;
+  }
+
+  const uniqueTokens = uniqueNormalizedTokensFromItems(tokens);
+  if (uniqueTokens.length === 0) return showToast('列表为空', 'error');
+
+  const ok = await confirmAction(
+    `将对 ${uniqueTokens.length} 个 Token 执行：同意用户协议 + 设置年龄 + 开启 NSFW。失败的 Token 会返回失败原因（仅当多次出现 401 时才可能被标记为失效），是否继续？`,
+    { okText: options.okText || '开始开启' }
+  );
+  if (!ok) return;
+
+  isBatchProcessing = true;
+  isBatchPaused = false;
+  currentBatchAction = 'nsfw';
+  batchQueue = uniqueTokens.slice();
+  batchTotal = batchQueue.length;
+  batchProcessed = 0;
+  batchNsfwStats = { success: 0, failed: 0, invalidated: 0 };
+
+  // Also lock the top "refresh all" button when a NSFW batch is running.
+  const btn = document.getElementById('btn-refresh-nsfw-all');
+  if (btn) btn.disabled = true;
+
+  updateBatchProgress();
+  setActionButtonsState();
+  processNsfwQueue();
+}
+
+async function processNsfwQueue() {
+  if (!isBatchProcessing || isBatchPaused || currentBatchAction !== 'nsfw') return;
+  if (batchQueue.length === 0) {
+    finishBatchProcess();
+    return;
+  }
+
+  const chunkSize = getNsfwBatchSize();
+  const chunk = batchQueue.splice(0, chunkSize);
+
+  try {
+    const res = await fetch('/api/v1/admin/tokens/nsfw/refresh', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...buildAuthHeaders(apiKey)
+      },
+      body: JSON.stringify({ tokens: chunk, retries: 1 })
+    });
+
+    const payload = await parseJsonSafely(res);
+    if (!res.ok) {
+      showToast(extractApiErrorMessage(payload, 'NSFW 开启失败'), 'error');
+      batchNsfwStats.failed += chunk.length;
+    } else if (!payload) {
+      batchNsfwStats.failed += chunk.length;
+    } else {
+      const summary = payload?.summary || {};
+      batchNsfwStats.success += Number(summary.success || 0);
+      batchNsfwStats.failed += Number(summary.failed || 0);
+      batchNsfwStats.invalidated += Number(summary.invalidated || 0);
+    }
+    batchProcessed += chunk.length;
+  } catch (e) {
+    showToast(e?.message ? `NSFW 开启失败: ${e.message}` : 'NSFW 开启失败', 'error');
+    batchNsfwStats.failed += chunk.length;
+    batchProcessed += chunk.length;
+  }
+
+  updateBatchProgress();
+  if (!isBatchProcessing || isBatchPaused) return;
+  setTimeout(() => {
+    processNsfwQueue();
+  }, isWorkersRuntime ? 600 : 400);
 }
 
 function isTokenInvalid(item) {
@@ -1351,59 +1449,15 @@ async function refreshStatus(token, btnEl) {
 }
 
 async function refreshAllNsfw() {
-  if (isNsfwRefreshAllRunning) {
-    showToast('NSFW 刷新任务进行中', 'info');
+  if (isBatchProcessing || isBatchNsfwRunning || isNsfwRefreshAllRunning) {
+    showToast('当前有任务进行中', 'info');
     return;
   }
-
-  const ok = await confirmAction(
-    '将对全部 Token 执行：同意用户协议 + 设置年龄 + 开启 NSFW。失败的 Token 会返回失败原因（仅当多次出现 401 时才可能被标记为失效），是否继续？',
-    { okText: '开始刷新' }
-  );
-  if (!ok) return;
-
-  const btn = document.getElementById('btn-refresh-nsfw-all');
-  const originalText = btn ? btn.innerHTML : '';
   isNsfwRefreshAllRunning = true;
-  if (btn) {
-    btn.disabled = true;
-    btn.innerHTML = '刷新中...';
-  }
-
   try {
-    const res = await fetch('/api/v1/admin/tokens/nsfw/refresh', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...buildAuthHeaders(apiKey)
-      },
-      body: JSON.stringify({ all: true })
-    });
-
-    const payload = await parseJsonSafely(res);
-    if (!res.ok) {
-      showToast(extractApiErrorMessage(payload, 'NSFW 刷新失败'), 'error');
-      return;
-    }
-
-    const summary = payload?.summary || {};
-    const total = Number(summary.total || 0);
-    const success = Number(summary.success || 0);
-    const failed = Number(summary.failed || 0);
-    const invalidated = Number(summary.invalidated || 0);
-    showToast(
-      `NSFW 刷新完成：总计 ${total}，成功 ${success}，失败 ${failed}，失效 ${invalidated}`,
-      failed > 0 ? 'info' : 'success'
-    );
-    loadData();
-  } catch (e) {
-    showToast(e?.message ? `NSFW 刷新失败: ${e.message}` : 'NSFW 刷新失败', 'error');
+    await startBatchNsfwWithTokens(flatTokens, { okText: '开始刷新' });
   } finally {
     isNsfwRefreshAllRunning = false;
-    if (btn) {
-      btn.disabled = false;
-      btn.innerHTML = originalText || '一键刷新 NSFW';
-    }
   }
 }
 
@@ -1479,6 +1533,8 @@ function toggleBatchPause() {
   if (!isBatchPaused) {
     if (currentBatchAction === 'refresh') {
       processBatchQueue();
+    } else if (currentBatchAction === 'nsfw') {
+      processNsfwQueue();
     } else if (currentBatchAction === 'delete') {
       processDeleteQueue();
     }
@@ -1497,15 +1553,33 @@ function finishBatchProcess(aborted = false) {
   batchQueue = [];
   currentBatchAction = null;
 
+  const btn = document.getElementById('btn-refresh-nsfw-all');
+  if (btn) btn.disabled = false;
+
   updateBatchProgress();
   setActionButtonsState();
   updateSelectionState();
   loadData(); // Final data refresh
 
   if (aborted) {
-    showToast(action === 'delete' ? '已终止删除' : '已终止刷新', 'info');
+    if (action === 'delete') showToast('已终止删除', 'info');
+    else if (action === 'nsfw') showToast('已终止 NSFW', 'info');
+    else showToast('已终止刷新', 'info');
   } else {
-    showToast(action === 'delete' ? '删除完成' : '刷新完成', 'success');
+    if (action === 'delete') {
+      showToast('删除完成', 'success');
+    } else if (action === 'nsfw') {
+      const total = Number(batchTotal || 0);
+      const success = Number(batchNsfwStats.success || 0);
+      const failed = Number(batchNsfwStats.failed || 0);
+      const invalidated = Number(batchNsfwStats.invalidated || 0);
+      showToast(
+        `NSFW 开启完成：总计 ${total}，成功 ${success}，失败 ${failed}，失效 ${invalidated}`,
+        failed > 0 ? 'info' : 'success'
+      );
+    } else {
+      showToast('刷新完成', 'success');
+    }
   }
 }
 
@@ -1514,55 +1588,9 @@ async function batchUpdate() {
 }
 
 async function batchEnableNsfw() {
-  if (isBatchProcessing || isBatchNsfwRunning) {
-    showToast('当前有任务进行中', 'info');
-    return;
-  }
   const selected = flatTokens.filter(t => t._selected);
   if (selected.length === 0) return showToast('未选择 Token', 'error');
-
-  const ok = await confirmAction(
-    `将对选中的 ${selected.length} 个 Token 执行：同意用户协议 + 设置年龄 + 开启 NSFW。失败的 Token 会返回失败原因（仅当多次出现 401 时才可能被标记为失效），是否继续？`,
-    { okText: '开始开启' }
-  );
-  if (!ok) return;
-
-  isBatchNsfwRunning = true;
-  setActionButtonsState();
-
-  try {
-    const tokens = selected.map(t => normalizeSsoToken(t.token)).filter(Boolean);
-    const res = await fetch('/api/v1/admin/tokens/nsfw/refresh', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...buildAuthHeaders(apiKey)
-      },
-      body: JSON.stringify({ tokens, retries: 1 })
-    });
-
-    const payload = await parseJsonSafely(res);
-    if (!res.ok) {
-      showToast(extractApiErrorMessage(payload, 'NSFW 开启失败'), 'error');
-      return;
-    }
-
-    const summary = payload?.summary || {};
-    const total = Number(summary.total || 0);
-    const success = Number(summary.success || 0);
-    const failed = Number(summary.failed || 0);
-    const invalidated = Number(summary.invalidated || 0);
-    showToast(
-      `NSFW 开启完成：总计 ${total}，成功 ${success}，失败 ${failed}，失效 ${invalidated}`,
-      failed > 0 ? 'info' : 'success'
-    );
-    loadData();
-  } catch (e) {
-    showToast(e?.message ? `NSFW 开启失败: ${e.message}` : 'NSFW 开启失败', 'error');
-  } finally {
-    isBatchNsfwRunning = false;
-    setActionButtonsState();
-  }
+  await startBatchNsfwWithTokens(selected, { okText: '开始开启' });
 }
 
 function updateBatchProgress() {

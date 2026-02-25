@@ -36,6 +36,8 @@ export interface TokenSettings {
   auto_refresh?: boolean;
   refresh_interval_hours?: number;
   fail_threshold?: number;
+  nsfw_refresh_concurrency?: number;
+  nsfw_refresh_retries?: number;
   save_delay_ms?: number;
   reload_interval_sec?: number;
 }
@@ -112,6 +114,8 @@ const DEFAULTS: SettingsBundle = {
     auto_refresh: true,
     refresh_interval_hours: 8,
     fail_threshold: 5,
+    nsfw_refresh_concurrency: 10,
+    nsfw_refresh_retries: 3,
     save_delay_ms: 500,
     reload_interval_sec: 30,
   },
@@ -312,4 +316,3 @@ export async function saveSettings(
     ["register", JSON.stringify(nextRegister), now],
   );
 }
-

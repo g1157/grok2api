@@ -358,6 +358,8 @@ adminRoutes.get("/api/v1/admin/config", requireAdminAuth, async (c) => {
         auto_refresh: Boolean(settings.token.auto_refresh),
         refresh_interval_hours: Number(settings.token.refresh_interval_hours ?? 8),
         fail_threshold: Number(settings.token.fail_threshold ?? 5),
+        nsfw_refresh_concurrency: Number(settings.token.nsfw_refresh_concurrency ?? 10),
+        nsfw_refresh_retries: Number(settings.token.nsfw_refresh_retries ?? 3),
         save_delay_ms: Number(settings.token.save_delay_ms ?? 500),
         reload_interval_sec: Number(settings.token.reload_interval_sec ?? 30),
       },
@@ -432,6 +434,13 @@ adminRoutes.post("/api/v1/admin/config", requireAdminAuth, async (c) => {
         token_config.refresh_interval_hours = Math.max(1, Number(tokenCfg.refresh_interval_hours));
       if (Number.isFinite(Number(tokenCfg.fail_threshold)))
         token_config.fail_threshold = Math.max(1, Math.floor(Number(tokenCfg.fail_threshold)));
+      if (Number.isFinite(Number(tokenCfg.nsfw_refresh_concurrency)))
+        token_config.nsfw_refresh_concurrency = Math.max(
+          1,
+          Math.min(30, Math.floor(Number(tokenCfg.nsfw_refresh_concurrency))),
+        );
+      if (Number.isFinite(Number(tokenCfg.nsfw_refresh_retries)))
+        token_config.nsfw_refresh_retries = Math.max(0, Math.min(5, Math.floor(Number(tokenCfg.nsfw_refresh_retries))));
       if (Number.isFinite(Number(tokenCfg.save_delay_ms)))
         token_config.save_delay_ms = Math.max(0, Math.floor(Number(tokenCfg.save_delay_ms)));
       if (Number.isFinite(Number(tokenCfg.reload_interval_sec)))
@@ -783,7 +792,87 @@ adminRoutes.post("/api/v1/admin/tokens", requireAdminAuth, async (c) => {
     }
 
     if (stmts.length) await c.env.DB.batch(stmts);
-    return c.json(legacyOk({ message: "Token 已更新" }));
+
+    const settings = await getSettings(c.env);
+    const defaultConcRaw = Number(settings.token.nsfw_refresh_concurrency ?? 10);
+    const concurrency = Number.isFinite(defaultConcRaw) ? Math.max(1, Math.min(30, Math.floor(defaultConcRaw))) : 10;
+    const defaultRetriesRaw = Number(settings.token.nsfw_refresh_retries ?? 3);
+    const retries = Number.isFinite(defaultRetriesRaw) ? Math.max(0, Math.min(5, Math.floor(defaultRetriesRaw))) : 3;
+
+    const addedTokens = [...new Set(newlyAdded.map((t) => normalizeSsoToken(t)).filter(Boolean))];
+    if (addedTokens.length) {
+      const cf = normalizeCfCookie(settings.grok.cf_clearance ?? "");
+      c.executionCtx.waitUntil(
+        (async () => {
+          try {
+            const placeholders = addedTokens.map(() => "?").join(",");
+            const tokenRows = placeholders
+              ? await dbAll<{ token: string; token_type: "sso" | "ssoSuper"; tags: unknown; status: string; failed_count: number }>(
+                  c.env.DB,
+                  `SELECT token, token_type, tags, status, failed_count FROM tokens WHERE token IN (${placeholders})`,
+                  addedTokens,
+                )
+              : [];
+            const rowByToken = new Map(tokenRows.map((r) => [r.token, r]));
+
+            const results: Awaited<ReturnType<typeof refreshAccountSettingsForToken>>[] = new Array(addedTokens.length);
+            let nextIndex = 0;
+            const workerCount = Math.max(1, Math.min(concurrency, addedTokens.length));
+            const workers = Array.from({ length: workerCount }, async () => {
+              while (true) {
+                const idx = nextIndex++;
+                if (idx >= addedTokens.length) break;
+                const t = addedTokens[idx]!;
+                const cookie = cf ? `sso=${t};sso-rw=${t};${cf}` : `sso=${t};sso-rw=${t}`;
+                results[idx] = await refreshAccountSettingsForToken({ token: t, cookie, retries });
+              }
+            });
+            await Promise.all(workers);
+
+            for (const item of results) {
+              if (item.ok) {
+                const row = rowByToken.get(item.token);
+                if (row) {
+                  const nextTags = addTag(row.tags, "nsfw");
+                  await updateTokenTags(c.env.DB, row.token, row.token_type, nextTags);
+                }
+                continue;
+              }
+
+              // Only record auth failures (401). Avoid mass-expiring tokens when cf_clearance is missing/expired (403).
+              if (item.status_code === 401) {
+                const row = rowByToken.get(item.token);
+                const before = row?.failed_count ?? 0;
+                await recordTokenFailure(
+                  c.env.DB,
+                  item.token,
+                  401,
+                  `${item.step ?? "unknown"}: ${String(item.error ?? "unknown").slice(0, 200)}`,
+                );
+                if (row && row.status !== "expired" && before + 1 >= 3) {
+                  // keep behavior aligned with existing invalidation semantics
+                  row.status = "expired";
+                }
+              }
+            }
+          } catch (e) {
+            console.warn("Background NSFW refresh failed:", e);
+          }
+        })(),
+      );
+    }
+
+    return c.json(
+      legacyOk({
+        message: "Token 已更新",
+        nsfw_refresh: {
+          mode: "background",
+          triggered: addedTokens.length,
+          concurrency,
+          retries,
+        },
+      }),
+    );
   } catch (e) {
     return c.json(legacyErr(`Update tokens failed: ${e instanceof Error ? e.message : String(e)}`), 500);
   }
@@ -847,7 +936,7 @@ adminRoutes.post("/api/v1/admin/tokens/refresh", requireAdminAuth, async (c) => 
   }
 });
 
-adminRoutes.post("/api/v1/admin/tokens/nsfw/refresh", requireAdminAuth, async (c) => {
+  adminRoutes.post("/api/v1/admin/tokens/nsfw/refresh", requireAdminAuth, async (c) => {
   try {
     const body = (await c.req.json()) as any;
     const payload = body && typeof body === "object" ? body : {};
@@ -877,13 +966,17 @@ adminRoutes.post("/api/v1/admin/tokens/nsfw/refresh", requireAdminAuth, async (c
 
     if (!tokens.length) return c.json(legacyErr("No tokens provided"), 400);
 
-    const concurrencyRaw = Number(payload.concurrency ?? 10);
-    const concurrency = Number.isFinite(concurrencyRaw) ? Math.max(1, Math.min(30, Math.floor(concurrencyRaw))) : 10;
-    const retriesRaw = Number(payload.retries ?? 1);
-    const retries = Number.isFinite(retriesRaw) ? Math.max(0, Math.min(5, Math.floor(retriesRaw))) : 1;
-
     const settings = await getSettings(c.env);
     const cf = normalizeCfCookie(settings.grok.cf_clearance ?? "");
+    const defaultConcRaw = Number(settings.token.nsfw_refresh_concurrency ?? 10);
+    const defaultConc = Number.isFinite(defaultConcRaw) ? Math.max(1, Math.min(30, Math.floor(defaultConcRaw))) : 10;
+    const defaultRetriesRaw = Number(settings.token.nsfw_refresh_retries ?? 3);
+    const defaultRetries = Number.isFinite(defaultRetriesRaw) ? Math.max(0, Math.min(5, Math.floor(defaultRetriesRaw))) : 3;
+
+    const concurrencyRaw = Number(payload.concurrency ?? defaultConc);
+    const concurrency = Number.isFinite(concurrencyRaw) ? Math.max(1, Math.min(30, Math.floor(concurrencyRaw))) : defaultConc;
+    const retriesRaw = Number(payload.retries ?? defaultRetries);
+    const retries = Number.isFinite(retriesRaw) ? Math.max(0, Math.min(5, Math.floor(retriesRaw))) : defaultRetries;
 
     const rowByToken = new Map(rows.map((r) => [r.token, r]));
 

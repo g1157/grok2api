@@ -34,6 +34,7 @@ import {
   updateTokenTags,
   updateTokenLimits,
 } from "../repo/tokens";
+import { refreshAccountSettingsForToken } from "../grok/accountSettings";
 import { generateImagineWs, resolveAspectRatio } from "../grok/imagineExperimental";
 import {
   generateImagineWithAutoToken,
@@ -81,6 +82,41 @@ function formatBytes(sizeBytes: number): string {
 function normalizeSsoToken(raw: string): string {
   const t = (raw || "").trim();
   return t.startsWith("sso=") ? t.slice(4).trim() : t;
+}
+
+function parseTokenTags(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const item of raw) {
+      if (typeof item !== "string") continue;
+      const s = item.trim();
+      if (!s) continue;
+      const key = s.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(s);
+    }
+    return out;
+  }
+
+  if (typeof raw === "string" && raw.trim()) {
+    try {
+      return parseTokenTags(JSON.parse(raw));
+    } catch {
+      return [];
+    }
+  }
+
+  return [];
+}
+
+function addTag(tags: unknown, tag: string): string[] {
+  const cleaned = parseTokenTags(tags);
+  const needle = String(tag || "").trim();
+  if (!needle) return cleaned;
+  if (cleaned.some((t) => t.trim().toLowerCase() === needle.toLowerCase())) return cleaned;
+  return [...cleaned, needle];
 }
 
 async function clearKvCacheByType(
@@ -664,6 +700,7 @@ adminRoutes.get("/api/v1/admin/tokens", requireAdminAuth, async (c) => {
         heavy_quota: heavyQuota,
         heavy_quota_known: heavyQuotaKnown,
         token_type: r.token_type,
+        tags: parseTokenTags(r.tags),
         note: r.note ?? "",
         fail_count: r.failed_count ?? 0,
         use_count: 0,
@@ -684,6 +721,7 @@ adminRoutes.post("/api/v1/admin/tokens", requireAdminAuth, async (c) => {
     const byType: Record<"sso" | "ssoSuper", Set<string>> = { sso: new Set(), ssoSuper: new Set() };
     for (const r of rows) byType[r.token_type].add(r.token);
     const existingAll = new Set<string>(rows.map((r) => r.token));
+    const existingTagsByToken = new Map<string, string[]>(rows.map((r) => [r.token, parseTokenTags(r.tags)]));
     const newlyAdded: string[] = [];
 
     const now = nowMs();
@@ -713,6 +751,10 @@ adminRoutes.post("/api/v1/admin/tokens", requireAdminAuth, async (c) => {
             : Number((it as any)?.heavy_quota ?? (tokenType === "ssoSuper" ? quota : -1));
         const heavyQuota = Number.isFinite(heavyQuotaRaw) && heavyQuotaRaw >= 0 ? Math.floor(heavyQuotaRaw) : -1;
         const note = typeof it === "string" ? "" : String((it as any)?.note ?? "");
+        const tags =
+          typeof it === "string"
+            ? existingTagsByToken.get(token) ?? []
+            : parseTokenTags((it as any)?.tags ?? existingTagsByToken.get(token) ?? []);
 
         const status = statusRaw === "invalid" ? "expired" : "active";
         const cooldownUntil = statusRaw === "cooling" ? now + 60 * 60 * 1000 : null;
@@ -722,8 +764,8 @@ adminRoutes.post("/api/v1/admin/tokens", requireAdminAuth, async (c) => {
 
         stmts.push(
           c.env.DB.prepare(
-            "INSERT INTO tokens(token, token_type, created_time, remaining_queries, heavy_remaining_queries, status, failed_count, cooldown_until, last_failure_time, last_failure_reason, tags, note) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(token) DO UPDATE SET token_type=excluded.token_type, remaining_queries=excluded.remaining_queries, heavy_remaining_queries=excluded.heavy_remaining_queries, status=excluded.status, cooldown_until=excluded.cooldown_until, note=excluded.note",
-          ).bind(token, tokenType, now, remaining, heavy, status, 0, cooldownUntil, null, null, "[]", note),
+            "INSERT INTO tokens(token, token_type, created_time, remaining_queries, heavy_remaining_queries, status, failed_count, cooldown_until, last_failure_time, last_failure_reason, tags, note) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(token) DO UPDATE SET token_type=excluded.token_type, remaining_queries=excluded.remaining_queries, heavy_remaining_queries=excluded.heavy_remaining_queries, status=excluded.status, cooldown_until=excluded.cooldown_until, tags=excluded.tags, note=excluded.note",
+          ).bind(token, tokenType, now, remaining, heavy, status, 0, cooldownUntil, null, null, JSON.stringify(tags), note),
         );
       }
     }
@@ -802,6 +844,107 @@ adminRoutes.post("/api/v1/admin/tokens/refresh", requireAdminAuth, async (c) => 
     return c.json(legacyOk({ results }));
   } catch (e) {
     return c.json(legacyErr(`Refresh failed: ${e instanceof Error ? e.message : String(e)}`), 500);
+  }
+});
+
+adminRoutes.post("/api/v1/admin/tokens/nsfw/refresh", requireAdminAuth, async (c) => {
+  try {
+    const body = (await c.req.json()) as any;
+    const payload = body && typeof body === "object" ? body : {};
+
+    const rows = await listTokens(c.env.DB);
+    const tokens: string[] = [];
+    const seen = new Set<string>();
+
+    if (Boolean(payload.all)) {
+      for (const r of rows) {
+        const t = normalizeSsoToken(String(r.token ?? "").trim());
+        if (!t || seen.has(t)) continue;
+        seen.add(t);
+        tokens.push(t);
+      }
+    } else {
+      const candidates: string[] = [];
+      if (typeof payload.token === "string") candidates.push(payload.token);
+      if (Array.isArray(payload.tokens)) candidates.push(...payload.tokens.filter((x: any) => typeof x === "string"));
+      for (const raw of candidates) {
+        const t = normalizeSsoToken(String(raw ?? "").trim());
+        if (!t || seen.has(t)) continue;
+        seen.add(t);
+        tokens.push(t);
+      }
+    }
+
+    if (!tokens.length) return c.json(legacyErr("No tokens provided"), 400);
+
+    const concurrencyRaw = Number(payload.concurrency ?? 10);
+    const concurrency = Number.isFinite(concurrencyRaw) ? Math.max(1, Math.min(30, Math.floor(concurrencyRaw))) : 10;
+    const retriesRaw = Number(payload.retries ?? 1);
+    const retries = Number.isFinite(retriesRaw) ? Math.max(0, Math.min(5, Math.floor(retriesRaw))) : 1;
+
+    const settings = await getSettings(c.env);
+    const cf = normalizeCfCookie(settings.grok.cf_clearance ?? "");
+
+    const rowByToken = new Map(rows.map((r) => [r.token, r]));
+
+    const results: Awaited<ReturnType<typeof refreshAccountSettingsForToken>>[] = new Array(tokens.length);
+    let nextIndex = 0;
+    const workerCount = Math.max(1, Math.min(concurrency, tokens.length));
+    const workers = Array.from({ length: workerCount }, async () => {
+      while (true) {
+        const idx = nextIndex++;
+        if (idx >= tokens.length) break;
+        const t = tokens[idx]!;
+        const cookie = cf ? `sso=${t};sso-rw=${t};${cf}` : `sso=${t};sso-rw=${t}`;
+        results[idx] = await refreshAccountSettingsForToken({ token: t, cookie, retries });
+      }
+    });
+    await Promise.all(workers);
+
+    let success = 0;
+    let invalidated = 0;
+    const failed: any[] = [];
+
+    for (const item of results) {
+      if (item.ok) {
+        success += 1;
+        const row = rowByToken.get(item.token);
+        if (row) {
+          const nextTags = addTag(row.tags, "nsfw");
+          await updateTokenTags(c.env.DB, row.token, row.token_type, nextTags);
+        }
+        continue;
+      }
+
+      failed.push(item);
+
+      // Upstream-aligned: only record auth failures (401). Avoid mass-expiring tokens
+      // when cf_clearance is missing/expired (often 403).
+      if (item.status_code === 401) {
+        const row = rowByToken.get(item.token);
+        const before = row?.failed_count ?? 0;
+        await recordTokenFailure(
+          c.env.DB,
+          item.token,
+          401,
+          `${item.step ?? "unknown"}: ${String(item.error ?? "unknown").slice(0, 200)}`,
+        );
+        if (row && row.status !== "expired" && before + 1 >= 3) invalidated += 1;
+      }
+    }
+
+    return c.json({
+      status: "success",
+      summary: {
+        total: tokens.length,
+        success,
+        failed: failed.length,
+        invalidated,
+      },
+      failed,
+    });
+  } catch (e) {
+    return c.json(legacyErr(`NSFW refresh failed: ${e instanceof Error ? e.message : String(e)}`), 500);
   }
 });
 

@@ -393,11 +393,10 @@ async function detectWorkersRuntime() {
 async function applyRuntimeUiFlags() {
   // Default hide first; show back for local/docker after detection.
   setAutoRegisterUiEnabled(false);
-  setNsfwRefreshUiEnabled(false);
+  setNsfwRefreshUiEnabled(true);
   isWorkersRuntime = await detectWorkersRuntime();
   if (!isWorkersRuntime) {
     setAutoRegisterUiEnabled(true);
-    setNsfwRefreshUiEnabled(true);
   }
 }
 
@@ -1358,7 +1357,7 @@ async function refreshAllNsfw() {
   }
 
   const ok = await confirmAction(
-    '将对全部 Token 执行：同意用户协议 + 设置年龄 + 开启 NSFW。未成功的 Token 会自动标记为失效，是否继续？',
+    '将对全部 Token 执行：同意用户协议 + 设置年龄 + 开启 NSFW。失败的 Token 会返回失败原因（仅当多次出现 401 时才可能被标记为失效），是否继续？',
     { okText: '开始刷新' }
   );
   if (!ok) return;
@@ -1523,7 +1522,7 @@ async function batchEnableNsfw() {
   if (selected.length === 0) return showToast('未选择 Token', 'error');
 
   const ok = await confirmAction(
-    `将对选中的 ${selected.length} 个 Token 执行：同意用户协议 + 设置年龄 + 开启 NSFW。未成功的 Token 会自动标记为失效，是否继续？`,
+    `将对选中的 ${selected.length} 个 Token 执行：同意用户协议 + 设置年龄 + 开启 NSFW。失败的 Token 会返回失败原因（仅当多次出现 401 时才可能被标记为失效），是否继续？`,
     { okText: '开始开启' }
   );
   if (!ok) return;

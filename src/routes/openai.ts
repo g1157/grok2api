@@ -16,6 +16,7 @@ import {
   resolveImageGenerationMethod,
   sendExperimentalImageEditRequest,
 } from "../grok/imagineExperimental";
+import { generateImagineWithAutoToken, sizeToAspectRatio } from "../services/imagineStandalone";
 import { addRequestLog } from "../repo/logs";
 import { applyCooldown, recordTokenFailure, selectBestToken } from "../repo/tokens";
 import type { ApiAuthInfo } from "../auth";
@@ -1693,10 +1694,6 @@ openAiRoutes.post("/images/generations", async (c) => {
 
     const settingsBundle = await getSettings(c.env);
     let imageMethod = imageGenerationMethod(settingsBundle);
-    if (requestedModel === "grok-imagine") {
-      // imagine2api-compatible model: always use imagine websocket for better NSFW support.
-      imageMethod = IMAGE_METHOD_IMAGINE_WS_EXPERIMENTAL;
-    }
     const parsedResponseFormat = resolveImageResponseFormatByMethodOrError(
       body.response_format,
       imageFormatDefault(settingsBundle),
@@ -1721,6 +1718,89 @@ openAiRoutes.post("/images/generations", async (c) => {
       imageCount: n,
     });
     if (!quota.ok) return quota.resp;
+
+    // --- grok-imagine: use standalone imagine websocket (same as /api/v1/imagine/generate) ---
+    // This avoids prompt rewriting ("Image Generation: ...") and legacy fallback that trigger
+    // upstream content moderation. The standalone path sends the raw prompt with enable_nsfw.
+    if (requestedModel === "grok-imagine") {
+      const standaloneAspect = sizeToAspectRatio(size);
+
+      if (stream) {
+        // SSE streaming via standalone imagine WS with progress callbacks
+        const encoder = new TextEncoder();
+        const streamBody = new ReadableStream<Uint8Array>({
+          async start(controller) {
+            const startedAt = Date.now();
+            const completedByIndex = new Map<number, string>();
+
+            const emitCompleted = (index: number, value: string) => {
+              if (completedByIndex.has(index)) return;
+              completedByIndex.set(index, value);
+              controller.enqueue(
+                encoder.encode(
+                  buildImageSse("image_generation.completed", {
+                    type: "image_generation.completed",
+                    [responseField]: value,
+                    index,
+                    usage: { total_tokens: 50, input_tokens: 25, output_tokens: 25, input_tokens_details: { text_tokens: 5, image_tokens: 20 } },
+                  }),
+                ),
+              );
+            };
+
+            try {
+              const result = await generateImagineWithAutoToken(c.env, prompt, standaloneAspect, n);
+              if (result.success && result.urls) {
+                for (let i = 0; i < result.urls.length; i++) {
+                  const converted = await convertRawUrlByFormat(result.urls[i]!, responseFormat, { baseUrl, cookie: "", settings: settingsBundle.grok });
+                  emitCompleted(i, converted || "error");
+                }
+              } else {
+                emitCompleted(0, "error");
+              }
+
+              controller.enqueue(encoder.encode("event: done\ndata: [DONE]\n\n"));
+              controller.close();
+
+              const duration = (Date.now() - startedAt) / 1000;
+              await addRequestLog(c.env.DB, {
+                ip, model: requestedModel, duration: Number(duration.toFixed(2)),
+                status: result.success ? 200 : 500, key_name: keyName, token_suffix: "",
+                error: result.success ? "" : "stream_error",
+              });
+            } catch (e) {
+              emitCompleted(0, "error");
+              controller.enqueue(encoder.encode("event: done\ndata: [DONE]\n\n"));
+              controller.close();
+              const duration = (Date.now() - startedAt) / 1000;
+              await addRequestLog(c.env.DB, {
+                ip, model: requestedModel, duration: Number(duration.toFixed(2)),
+                status: 500, key_name: keyName, token_suffix: "", error: "stream_error",
+              });
+            }
+          },
+        });
+        return new Response(streamBody, { status: 200, headers: streamHeaders() });
+      }
+
+      // Non-stream: direct call
+      const result = await generateImagineWithAutoToken(c.env, prompt, standaloneAspect, n);
+      if (!result.success) {
+        const errMsg = result.error || "Image generation failed";
+        await recordImageLog({ env: c.env, ip, model: requestedModel, start, keyName, status: 500, error: errMsg });
+        return c.json(openAiError(errMsg, result.errorCode || "internal_error"), 500);
+      }
+
+      // Convert URLs to requested format
+      const convertedUrls = await Promise.all(
+        (result.urls || []).map((rawUrl) =>
+          convertRawUrlByFormat(rawUrl, responseFormat, { baseUrl, cookie: "", settings: settingsBundle.grok }),
+        ),
+      );
+      const selected = pickImageResults(convertedUrls.filter(Boolean), n);
+      await recordImageLog({ env: c.env, ip, model: requestedModel, start, keyName, status: 200, error: "" });
+      return c.json(buildImageJsonPayload(responseField, selected));
+    }
 
     if (stream) {
       if (imageMethod === IMAGE_METHOD_IMAGINE_WS_EXPERIMENTAL) {

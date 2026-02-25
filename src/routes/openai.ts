@@ -1412,6 +1412,69 @@ openAiRoutes.post("/chat/completions", async (c) => {
     });
     if (!quota.ok) return quota.resp;
 
+    // --- grok-imagine via chat/completions: route through standalone imagine WS ---
+    // Cherry Studio and similar clients call /chat/completions with model "grok-imagine".
+    // Use the same standalone path as /images/generations to avoid prompt rewriting and
+    // legacy fallback that trigger content moderation.
+    if (requestedModel === "grok-imagine") {
+      const { content: chatPrompt } = extractContent(body.messages as any);
+      const result = await generateImagineWithAutoToken(c.env, chatPrompt, "1:1", 1);
+
+      const duration = (Date.now() - start) / 1000;
+      if (!result.success) {
+        const errMsg = result.error || "Image generation failed";
+        await addRequestLog(c.env.DB, {
+          ip, model: requestedModel, duration: Number(duration.toFixed(2)),
+          status: 500, key_name: keyName, token_suffix: "", error: errMsg.slice(0, 200),
+        });
+        if (stream) {
+          const encoder = new TextEncoder();
+          const errStream = new ReadableStream<Uint8Array>({
+            start(ctrl) {
+              const errChunk = { id: `chatcmpl-${crypto.randomUUID()}`, object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model: requestedModel, choices: [{ index: 0, delta: { content: errMsg }, finish_reason: "stop" }] };
+              ctrl.enqueue(encoder.encode(`data: ${JSON.stringify(errChunk)}\n\ndata: [DONE]\n\n`));
+              ctrl.close();
+            },
+          });
+          return new Response(errStream, { status: 200, headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", Connection: "keep-alive", "X-Accel-Buffering": "no", "Access-Control-Allow-Origin": "*" } });
+        }
+        return c.json(openAiError(errMsg, result.errorCode || "internal_error"), 500);
+      }
+
+      const imageUrls = result.urls || [];
+      const markdownImages = imageUrls.map((u) => `![image](${u})`).join("\n");
+
+      await addRequestLog(c.env.DB, {
+        ip, model: requestedModel, duration: Number(duration.toFixed(2)),
+        status: 200, key_name: keyName, token_suffix: "", error: "",
+      });
+
+      if (stream) {
+        const encoder = new TextEncoder();
+        const id = `chatcmpl-${crypto.randomUUID()}`;
+        const ts = Math.floor(Date.now() / 1000);
+        const sseStream = new ReadableStream<Uint8Array>({
+          start(ctrl) {
+            const chunk = { id, object: "chat.completion.chunk", created: ts, model: requestedModel, choices: [{ index: 0, delta: { role: "assistant", content: markdownImages }, finish_reason: null }] };
+            ctrl.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+            const done = { id, object: "chat.completion.chunk", created: ts, model: requestedModel, choices: [{ index: 0, delta: {}, finish_reason: "stop" }] };
+            ctrl.enqueue(encoder.encode(`data: ${JSON.stringify(done)}\n\ndata: [DONE]\n\n`));
+            ctrl.close();
+          },
+        });
+        return new Response(sseStream, { status: 200, headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", Connection: "keep-alive", "X-Accel-Buffering": "no", "Access-Control-Allow-Origin": "*" } });
+      }
+
+      return c.json({
+        id: `chatcmpl-${crypto.randomUUID()}`,
+        object: "chat.completion",
+        created: Math.floor(Date.now() / 1000),
+        model: requestedModel,
+        choices: [{ index: 0, message: { role: "assistant", content: markdownImages }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+      });
+    }
+
     for (let attempt = 0; attempt < maxRetry; attempt++) {
       const chosen = await selectBestToken(c.env.DB, requestedModel);
       if (!chosen) return c.json(openAiError("No available token", "NO_AVAILABLE_TOKEN"), 503);

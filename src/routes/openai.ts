@@ -535,6 +535,7 @@ function getTokenSuffix(token: string): string {
 }
 
 const IMAGE_GENERATION_MODEL_ID = "grok-imagine-1.0";
+const IMAGE_GENERATION_MODEL_IDS = new Set(["grok-imagine-1.0", "grok-imagine"]);
 const IMAGE_EDIT_MODEL_ID = "grok-imagine-1.0-edit";
 
 function parseImageCount(input: unknown): number {
@@ -1194,9 +1195,9 @@ function nonEmptyPromptOrError(prompt: string) {
 }
 
 function invalidGenerationModelOrError(model: string) {
-  if (model !== IMAGE_GENERATION_MODEL_ID) {
+  if (!IMAGE_GENERATION_MODEL_IDS.has(model)) {
     return {
-      message: `The model '${IMAGE_GENERATION_MODEL_ID}' is required for image generations.`,
+      message: `The model must be one of ${JSON.stringify([...IMAGE_GENERATION_MODEL_IDS])} for image generations.`,
       code: "model_not_supported",
     };
   }
@@ -1691,7 +1692,11 @@ openAiRoutes.post("/images/generations", async (c) => {
     }
 
     const settingsBundle = await getSettings(c.env);
-    const imageMethod = imageGenerationMethod(settingsBundle);
+    let imageMethod = imageGenerationMethod(settingsBundle);
+    if (requestedModel === "grok-imagine") {
+      // imagine2api-compatible model: always use imagine websocket for better NSFW support.
+      imageMethod = IMAGE_METHOD_IMAGINE_WS_EXPERIMENTAL;
+    }
     const parsedResponseFormat = resolveImageResponseFormatByMethodOrError(
       body.response_format,
       imageFormatDefault(settingsBundle),

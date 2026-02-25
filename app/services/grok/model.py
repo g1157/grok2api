@@ -139,6 +139,16 @@ class ModelService:
             display_name="Grok 4.20 Beta"
         ),
         ModelInfo(
+            model_id="grok-imagine",
+            grok_model="grok-3",
+            rate_limit_model="grok-3",
+            model_mode="MODEL_MODE_FAST",
+            cost=Cost.HIGH,
+            display_name="Grok Imagine (WebSocket)",
+            description="Image generation via imagine websocket (enable_nsfw=true)",
+            is_image=True
+        ),
+        ModelInfo(
             model_id="grok-imagine-1.0",
             grok_model="grok-3",
             rate_limit_model="grok-3",

@@ -74,9 +74,10 @@ class ImageEditRequest(BaseModel):
 def validate_generation_request(request: ImageGenerationRequest):
     """Validate image generation request parameters."""
     model_id = request.model or "grok-imagine-1.0"
-    if model_id != "grok-imagine-1.0":
+    allowed_models = {"grok-imagine-1.0", "grok-imagine"}
+    if model_id not in allowed_models:
         raise ValidationException(
-            message="The model `grok-imagine-1.0` is required for image generation.",
+            message=f"The model must be one of {sorted(allowed_models)} for image generation.",
             param="model",
             code="model_not_supported",
         )
@@ -581,6 +582,9 @@ async def create_image(
     n = int(request.n or 1)
     concurrency = max(1, min(3, int(request.concurrency or 1)))
     image_method = _image_generation_method()
+    if model_id == "grok-imagine":
+        # imagine2api-compatible model: always use imagine websocket for better NSFW support.
+        image_method = IMAGE_METHOD_IMAGINE_WS_EXPERIMENTAL
     response_format = resolve_image_response_format(request.response_format, image_method)
     request.response_format = response_format
     response_field = response_field_name(response_format)

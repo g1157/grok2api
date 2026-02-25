@@ -599,7 +599,6 @@ function bindWorkflowEvents() {
   q('workflow-nsfw-toggle')?.addEventListener('change', (e) => {
     setWorkflowNsfwEnabled(Boolean(e.target?.checked));
   });
-  q('workflow-sync-nsfw-btn')?.addEventListener('click', refreshWorkflowNsfw);
   q('workflow-clear-selection-btn')?.addEventListener('click', clearWorkflowSelection);
 
   q('video-stitch-btn')?.addEventListener('click', stitchSelectedVideos);
@@ -1446,34 +1445,6 @@ async function ensureParentPostIdForSelection(force = false, silent = false) {
   } finally {
     workflowBusy = false;
     renderWorkflowState();
-  }
-}
-
-async function refreshWorkflowNsfw() {
-  const headers = { ...buildApiHeaders(), 'Content-Type': 'application/json' };
-  if (!headers.Authorization) return showToast('请先填写 API Key', 'warning');
-  const btn = q('workflow-sync-nsfw-btn');
-  const oldText = btn?.textContent || '';
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = '同步中...';
-  }
-  try {
-    const res = await fetch('/api/v1/admin/tokens/nsfw/refresh', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ all: true, retries: 1 }),
-    });
-    const payload = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(payload?.detail || payload?.error || `HTTP ${res.status}`);
-    showToast('NSFW 全流程刷新已触发', 'success');
-  } catch (e) {
-    showToast(`NSFW 刷新失败: ${e?.message || e}`, 'error');
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = oldText || '同步 NSFW';
-    }
   }
 }
 
@@ -2623,13 +2594,9 @@ async function generateVideo() {
   if (!prompt) return showToast('请输入 prompt', 'warning');
 
   const model = String(q('model-select').value || 'grok-imagine-1.0-video').trim();
-  const streamRequested = Boolean(q('stream-toggle').checked);
-  const stream = false;
+  const stream = Boolean(q('stream-toggle').checked);
   const headers = { ...buildApiHeaders(), 'Content-Type': 'application/json' };
   if (!headers.Authorization) return showToast('请先填写 API Key', 'warning');
-  if (streamRequested) {
-    showToast('视频任务已自动切换为非流式，以提高成功率', 'info');
-  }
 
   const videoConfig = {
     aspect_ratio: String(q('video-aspect').value || '3:2'),

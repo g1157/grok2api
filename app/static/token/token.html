@@ -150,6 +150,14 @@
             <option value="unlinked">未接入</option>
           </select>
         </div>
+        <div class="filter-group flex items-center gap-2">
+          <span class="text-xs text-[var(--accents-5)]">NSFW</span>
+          <select id="filter-nsfw" class="geist-input h-7 text-xs min-w-[110px]" onchange="onFilterChange()">
+            <option value="all">全部</option>
+            <option value="enabled">已开</option>
+            <option value="disabled">未开</option>
+          </select>
+        </div>
         <div class="filter-summary ml-auto flex items-center gap-3">
           <span class="text-xs text-[var(--accents-5)]">结果 <span id="filter-result-count">0</span></span>
           <button onclick="resetFilters()" class="geist-button-outline text-xs px-3 h-7">清空筛选</button>
@@ -204,6 +212,10 @@
       <button id="btn-batch-update" onclick="batchUpdate()"
         class="geist-button-outline text-xs px-3 gap-1 border-0 hover:bg-gray-100 justify-center">
         刷新
+      </button>
+      <button id="btn-batch-nsfw" onclick="batchEnableNsfw()"
+        class="geist-button-outline text-xs px-3 gap-1 border-0 hover:bg-gray-100 justify-center">
+        NSFW
       </button>
       <button id="btn-batch-delete" onclick="batchDelete()" class="geist-button-danger text-xs px-3">
         删除

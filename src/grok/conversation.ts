@@ -96,9 +96,12 @@ export function buildConversationPayload(args: {
     const aspectRatio = (args.videoConfig?.aspect_ratio ?? "").trim() || "3:2";
     const videoLengthRaw = Number(args.videoConfig?.video_length ?? 6);
     const videoLength = Number.isFinite(videoLengthRaw) ? Math.max(1, Math.floor(videoLengthRaw)) : 6;
-    const resolution = (args.videoConfig?.resolution ?? "SD") === "HD" ? "HD" : "SD";
     const preset = (args.videoConfig?.preset ?? "normal").trim();
-    const enableNsfw = args.videoConfig?.nsfw_enabled !== false;
+    const resolutionRaw = String(args.videoConfig?.resolution ?? "").trim().toLowerCase();
+    const resolutionName =
+      resolutionRaw === "hd" || resolutionRaw === "720p" || resolutionRaw === "720"
+        ? "720p"
+        : "480p";
 
     let modeFlag = "--mode=custom";
     if (preset === "fun") modeFlag = "--mode=extremely-crazy";
@@ -109,28 +112,43 @@ export function buildConversationPayload(args: {
 
     return {
       isVideoModel: true,
-      referer: "https://grok.com/imagine",
+      referer: "https://grok.com/",
       payload: {
-        temporary: true,
+        temporary: settings.temporary ?? true,
         modelName: "grok-3",
         message: prompt,
+        fileAttachments: [],
+        imageAttachments: [],
+        disableSearch: false,
+        enableImageGeneration: true,
+        returnImageBytes: false,
+        returnRawGrokInXaiRequest: false,
+        enableImageStreaming: true,
+        imageGenerationCount: 2,
+        forceConcise: false,
         toolOverrides: { videoGen: true },
         enableSideBySide: true,
-        enableNsfw,
+        sendFinalMetadata: true,
+        isReasoning: false,
+        webpageUrls: [],
+        disableTextFollowUps: true,
         responseMetadata: {
-          experiments: [],
+          requestModelDetails: { modelId: "grok-3" },
           modelConfigOverride: {
             modelMap: {
               videoGenModelConfig: {
                 parentPostId: postId,
                 aspectRatio,
                 videoLength,
-                videoResolution: resolution,
-                enableNsfw,
+                resolutionName,
               },
             },
           },
         },
+        disableMemory: false,
+        forceSideBySide: false,
+        modelMode: mode,
+        isAsyncChat: false,
       },
     };
   }

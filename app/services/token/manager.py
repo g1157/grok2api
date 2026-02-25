@@ -439,6 +439,29 @@ class TokenManager:
         token.last_fail_reason = None
         token.last_sync_at = int(datetime.now().timestamp() * 1000)
         token.status = TokenStatus.COOLING if token.quota == 0 else TokenStatus.ACTIVE
+        # Mark NSFW enabled (used by admin UI filters / selection heuristics).
+        # Account-settings refresh currently includes enabling always_show_nsfw_content,
+        # so we can safely add the tag on success.
+        try:
+            tags = token.tags if isinstance(getattr(token, "tags", None), list) else []
+            if not any(str(t).strip().lower() == "nsfw" for t in tags):
+                tags.append("nsfw")
+            # De-dup / normalize.
+            normalized: list[str] = []
+            seen: set[str] = set()
+            for t in tags:
+                s = str(t or "").strip()
+                if not s:
+                    continue
+                key = s.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                normalized.append(s)
+            token.tags = normalized
+        except Exception:
+            # Tags are auxiliary; never fail the refresh success path.
+            pass
 
         if save:
             await self._save()

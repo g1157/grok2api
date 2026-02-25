@@ -436,6 +436,7 @@ def _normalize_admin_token_item(pool_name: str, item: Any) -> dict | None:
             "heavy_quota": -1,
             "heavy_quota_known": False,
             "token_type": token_type,
+            "tags": [],
             "note": "",
             "fail_count": 0,
             "use_count": 0,
@@ -453,6 +454,23 @@ def _normalize_admin_token_item(pool_name: str, item: Any) -> dict | None:
     quota, quota_known = _parse_quota_value(item.get("quota"))
     heavy_quota, heavy_quota_known = _parse_quota_value(item.get("heavy_quota"))
 
+    # Tags are optional. Persisted in token storage and used for UI filters (e.g., "nsfw").
+    raw_tags = item.get("tags")
+    tags: list[str] = []
+    if isinstance(raw_tags, list):
+        seen: set[str] = set()
+        for t in raw_tags:
+            if not isinstance(t, str):
+                continue
+            s = t.strip()
+            if not s:
+                continue
+            key = s.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            tags.append(s)
+
     return {
         "token": token,
         "status": _normalize_token_status(item.get("status")),
@@ -461,6 +479,7 @@ def _normalize_admin_token_item(pool_name: str, item: Any) -> dict | None:
         "heavy_quota": heavy_quota,
         "heavy_quota_known": heavy_quota_known,
         "token_type": token_type,
+        "tags": tags,
         "note": str(item.get("note") or ""),
         "fail_count": _safe_int(item.get("fail_count") or 0, 0),
         "use_count": _safe_int(item.get("use_count") or 0, 0),

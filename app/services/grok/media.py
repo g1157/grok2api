@@ -50,7 +50,7 @@ class VideoService:
         self.proxy = proxy or get_config("grok.base_proxy_url", "")
         self.timeout = get_config("grok.timeout", TIMEOUT)
     
-    def _build_headers(self, token: str, referer: str = "https://grok.com/imagine") -> dict:
+    def _build_headers(self, token: str, referer: str = "https://grok.com") -> dict:
         """构建请求头"""
         headers = {
             "Accept": "*/*",
@@ -185,30 +185,40 @@ class VideoService:
             mode_flag = "--mode=extremely-spicy-or-crazy"
             
         full_prompt = f"{prompt} {mode_flag}".strip()
-        use_nsfw = bool(nsfw_enabled)
-        
-        return {
-            "temporary": True,
-            "modelName": "grok-3",
-            "message": full_prompt,
-            "toolOverrides": {"videoGen": True},
-            "enableSideBySide": True,
-            "enableNsfw": use_nsfw,
-            "responseMetadata": {
-                "experiments": [],
-                "modelConfigOverride": {
-                    "modelMap": {
-                        "videoGenModelConfig": {
-                            "parentPostId": post_id,
-                            "aspectRatio": aspect_ratio,
-                            "videoLength": video_length,
-                            "videoResolution": resolution,
-                            "enableNsfw": use_nsfw,
-                        }
-                    }
-                }
-            }
+
+        # Map legacy resolution values -> upstream resolutionName (480p/720p).
+        res = str(resolution or "").strip().lower()
+        resolution_name = "480p"
+        if res in {"hd", "720p", "720"}:
+            resolution_name = "720p"
+        elif res in {"sd", "480p", "480"}:
+            resolution_name = "480p"
+
+        # Build payload aligned with ChatService to keep upstream schema compatible.
+        from app.services.grok.chat import ChatRequestBuilder
+
+        payload = ChatRequestBuilder.build_payload(
+            message=full_prompt,
+            model="grok-3",
+            mode="MODEL_MODE_FAST",
+            think=None,
+        )
+        payload["toolOverrides"] = {"videoGen": True}
+
+        response_meta = payload.setdefault("responseMetadata", {})
+        model_override = response_meta.setdefault("modelConfigOverride", {"modelMap": {}})
+        model_map = model_override.setdefault("modelMap", {})
+        model_map["videoGenModelConfig"] = {
+            "parentPostId": post_id,
+            "aspectRatio": aspect_ratio,
+            "videoLength": video_length,
+            "resolutionName": resolution_name,
         }
+
+        # Recent upstream video flow does not require request-level enableNsfw;
+        # NSFW access is governed by token/account settings. Keep arg for API compatibility.
+        _ = nsfw_enabled
+        return payload
     
     async def generate(
         self,

@@ -99,6 +99,11 @@
       color: #dc2626;
     }
 
+    .badge-purple {
+      background: #f5f3ff;
+      color: #7c3aed;
+    }
+
     .checkbox {
       width: 12px;
       height: 12px;

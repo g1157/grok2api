@@ -14,6 +14,7 @@ let autoRegisterLastAdded = 0;
 let liveStatsTimer = null;
 let isWorkersRuntime = false;
 let isNsfwRefreshAllRunning = false;
+let isBatchNsfwRunning = false;
 let imaginePoolStatus = { total: 0, available: 0, tokens: [] };
 let imagineStatusByMasked = new Map();
 
@@ -25,6 +26,7 @@ const filterState = {
   statusInvalid: false,
   statusExhausted: false,
   imagineHealth: 'all',
+  nsfw: 'all',
 };
 
 function normalizeSsoToken(token) {
@@ -218,6 +220,11 @@ function normalizeTokenRecord(pool, raw) {
   const status = normalizeStatus(source.status);
   const quotaParsed = parseQuotaValue(source.quota);
   const heavyParsed = parseQuotaValue(source.heavy_quota);
+  const tags = Array.isArray(source.tags)
+    ? source.tags
+      .filter((t) => typeof t === 'string' && String(t).trim())
+      .map((t) => String(t).trim())
+    : [];
 
   return {
     token,
@@ -227,12 +234,18 @@ function normalizeTokenRecord(pool, raw) {
     heavy_quota: heavyParsed.known ? heavyParsed.value : -1,
     heavy_quota_known: heavyParsed.known,
     token_type: source.token_type || tokenType,
+    tags,
     note: source.note || '',
     fail_count: source.fail_count || 0,
     use_count: source.use_count || 0,
     pool: pool,
     _selected: false,
   };
+}
+
+function isTokenNsfwEnabled(item) {
+  const tags = item && Array.isArray(item.tags) ? item.tags : [];
+  return tags.some((t) => String(t || '').trim().toLowerCase() === 'nsfw');
 }
 
 function isTokenInvalid(item) {
@@ -274,6 +287,9 @@ function refreshFilterStateFromDom() {
   const imagineEl = document.getElementById('filter-imagine-health');
   const imagineValue = String(imagineEl?.value || 'all').trim();
   filterState.imagineHealth = imagineValue || 'all';
+  const nsfwEl = document.getElementById('filter-nsfw');
+  const nsfwValue = String(nsfwEl?.value || 'all').trim();
+  filterState.nsfw = nsfwValue || 'all';
 }
 
 function applyFilters() {
@@ -292,6 +308,9 @@ function applyFilters() {
     const imagineHealth = getImagineHealthMeta(item);
     const matchesImagine = filterState.imagineHealth === 'all' || imagineHealth.key === filterState.imagineHealth;
     if (!matchesImagine) return false;
+    const nsfwFilter = String(filterState.nsfw || 'all').toLowerCase();
+    if (nsfwFilter === 'enabled' && !isTokenNsfwEnabled(item)) return false;
+    if (nsfwFilter === 'disabled' && isTokenNsfwEnabled(item)) return false;
     if (!hasStatusFilter) return true;
 
     const active = isTokenActive(item);
@@ -321,6 +340,8 @@ function resetFilters() {
     });
   const imagineEl = document.getElementById('filter-imagine-health');
   if (imagineEl) imagineEl.value = 'all';
+  const nsfwEl = document.getElementById('filter-nsfw');
+  if (nsfwEl) nsfwEl.value = 'all';
   applyFilters();
   renderTable();
 }
@@ -341,11 +362,14 @@ function setAutoRegisterUiEnabled(enabled) {
 
 function setNsfwRefreshUiEnabled(enabled) {
   const btn = document.getElementById('btn-refresh-nsfw-all');
-  if (!btn) return;
-  if (enabled) {
-    btn.classList.remove('hidden');
-  } else {
-    btn.classList.add('hidden');
+  const batchBtn = document.getElementById('btn-batch-nsfw');
+  if (btn) {
+    if (enabled) btn.classList.remove('hidden');
+    else btn.classList.add('hidden');
+  }
+  // Batch NSFW button uses the same backend capability.
+  if (batchBtn) {
+    batchBtn.style.display = enabled ? '' : 'none';
   }
 }
 
@@ -606,7 +630,9 @@ function renderTable() {
     else if (isTokenExhausted(item)) statusClass = 'badge-orange';
     else statusClass = 'badge-red';
     tdStatus.className = 'text-center';
-    tdStatus.innerHTML = `<span class="badge ${statusClass}">${isTokenActive(item) ? 'active' : (isTokenExhausted(item) ? 'exhausted' : 'invalid')}</span>`;
+    const statusText = isTokenActive(item) ? 'active' : (isTokenExhausted(item) ? 'exhausted' : 'invalid');
+    const nsfwBadge = isTokenNsfwEnabled(item) ? `<span class="badge badge-purple">NSFW</span>` : '';
+    tdStatus.innerHTML = `<div class="flex items-center justify-center gap-2"><span class="badge ${statusClass}">${statusText}</span>${nsfwBadge}</div>`;
 
     // Quota (Center)
     const tdImagine = document.createElement('td');
@@ -798,6 +824,7 @@ async function submitManualAdd() {
     heavy_quota: -1,
     heavy_quota_known: false,
     token_type: poolToType(pool),
+    tags: [],
     note: note,
     status: 'active',
     use_count: 0,
@@ -1115,6 +1142,7 @@ async function saveEdit() {
       heavy_quota: -1,
       heavy_quota_known: false,
       token_type: poolToType(newPool || 'ssoBasic'),
+      tags: [],
       note: newNote,
       status: 'active', // default
       use_count: 0,
@@ -1152,6 +1180,7 @@ async function syncToServer() {
       status: t.status,
       quota: t.quota,
       heavy_quota: t.heavy_quota,
+      tags: Array.isArray(t.tags) ? t.tags : [],
       note: t.note,
       fail_count: t.fail_count,
       use_count: t.use_count || 0
@@ -1234,6 +1263,7 @@ async function submitImport() {
       heavy_quota: -1,
       heavy_quota_known: false,
       token_type: poolToType(pool),
+      tags: [],
       note: '',
       use_count: 0,
       _selected: false
@@ -1484,6 +1514,58 @@ async function batchUpdate() {
   startBatchRefresh();
 }
 
+async function batchEnableNsfw() {
+  if (isBatchProcessing || isBatchNsfwRunning) {
+    showToast('当前有任务进行中', 'info');
+    return;
+  }
+  const selected = flatTokens.filter(t => t._selected);
+  if (selected.length === 0) return showToast('未选择 Token', 'error');
+
+  const ok = await confirmAction(
+    `将对选中的 ${selected.length} 个 Token 执行：同意用户协议 + 设置年龄 + 开启 NSFW。未成功的 Token 会自动标记为失效，是否继续？`,
+    { okText: '开始开启' }
+  );
+  if (!ok) return;
+
+  isBatchNsfwRunning = true;
+  setActionButtonsState();
+
+  try {
+    const tokens = selected.map(t => normalizeSsoToken(t.token)).filter(Boolean);
+    const res = await fetch('/api/v1/admin/tokens/nsfw/refresh', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...buildAuthHeaders(apiKey)
+      },
+      body: JSON.stringify({ tokens, retries: 1 })
+    });
+
+    const payload = await parseJsonSafely(res);
+    if (!res.ok) {
+      showToast(extractApiErrorMessage(payload, 'NSFW 开启失败'), 'error');
+      return;
+    }
+
+    const summary = payload?.summary || {};
+    const total = Number(summary.total || 0);
+    const success = Number(summary.success || 0);
+    const failed = Number(summary.failed || 0);
+    const invalidated = Number(summary.invalidated || 0);
+    showToast(
+      `NSFW 开启完成：总计 ${total}，成功 ${success}，失败 ${failed}，失效 ${invalidated}`,
+      failed > 0 ? 'info' : 'success'
+    );
+    loadData();
+  } catch (e) {
+    showToast(e?.message ? `NSFW 开启失败: ${e.message}` : 'NSFW 开启失败', 'error');
+  } finally {
+    isBatchNsfwRunning = false;
+    setActionButtonsState();
+  }
+}
+
 function updateBatchProgress() {
   const container = document.getElementById('batch-progress');
   const text = document.getElementById('batch-progress-text');
@@ -1508,12 +1590,14 @@ function updateBatchProgress() {
 
 function setActionButtonsState() {
   const selectedCount = flatTokens.filter(t => t._selected).length;
-  const disabled = isBatchProcessing;
+  const disabled = isBatchProcessing || isBatchNsfwRunning;
   const exportBtn = document.getElementById('btn-batch-export');
   const updateBtn = document.getElementById('btn-batch-update');
+  const nsfwBtn = document.getElementById('btn-batch-nsfw');
   const deleteBtn = document.getElementById('btn-batch-delete');
   if (exportBtn) exportBtn.disabled = disabled || selectedCount === 0;
   if (updateBtn) updateBtn.disabled = disabled || selectedCount === 0;
+  if (nsfwBtn) nsfwBtn.disabled = disabled || selectedCount === 0;
   if (deleteBtn) deleteBtn.disabled = disabled || selectedCount === 0;
 }
 

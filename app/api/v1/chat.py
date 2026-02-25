@@ -71,14 +71,28 @@ class VideoConfig(BaseModel):
     @field_validator("resolution")
     @classmethod
     def validate_resolution(cls, v):
-        allowed = ["SD", "HD"]
-        if v and v not in allowed:
-            raise ValidationException(
-                message=f"resolution must be one of {allowed}",
-                param="video_config.resolution",
-                code="invalid_resolution"
-            )
-        return v
+        # Upstream commonly uses resolutionName (480p/720p). Keep backward-compatible
+        # acceptance of legacy SD/HD values used by older frontends.
+        if v is None:
+            return v
+        value = str(v).strip()
+        if not value:
+            return "SD"
+
+        upper = value.upper()
+        lower = value.lower()
+
+        if upper in {"SD", "HD"}:
+            return upper
+        if lower in {"480p", "720p"}:
+            return lower
+
+        allowed = ["SD", "HD", "480p", "720p"]
+        raise ValidationException(
+            message=f"resolution must be one of {allowed}",
+            param="video_config.resolution",
+            code="invalid_resolution",
+        )
     
     @field_validator("preset")
     @classmethod

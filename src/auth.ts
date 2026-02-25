@@ -77,15 +77,23 @@ export const requireAdminOrApiAuth: MiddlewareHandler<{ Bindings: Env }> = async
   const token = bearerToken(c.req.header("Authorization") ?? null);
   if (!token) return c.json({ error: "缺少认证令牌", code: "MISSING_AUTH" }, 401);
 
-  const adminOk = await verifyAdminSession(c.env.DB, token);
-  if (adminOk) return next();
+  try {
+    const adminOk = await verifyAdminSession(c.env.DB, token);
+    if (adminOk) return next();
+  } catch {
+    // Keep auth middleware fail-closed without turning transient DB errors into 500s.
+  }
 
   const settings = await getSettings(c.env);
   const globalKey = (settings.grok.api_key ?? "").trim();
   if (globalKey && token === globalKey) return next();
 
-  const keyInfo = await validateApiKey(c.env.DB, token);
-  if (keyInfo) return next();
+  try {
+    const keyInfo = await validateApiKey(c.env.DB, token);
+    if (keyInfo) return next();
+  } catch {
+    // Keep behavior consistent with invalid credentials when key table is unavailable.
+  }
 
-  return c.json({ error: "会话已过期", code: "SESSION_EXPIRED" }, 401);
+  return c.json({ error: "认证令牌无效", code: "INVALID_AUTH" }, 401);
 };

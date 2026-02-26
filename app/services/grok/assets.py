@@ -4,6 +4,7 @@ Grok 文件资产服务
 
 import asyncio
 import base64
+import ipaddress
 import os
 import time
 import hashlib
@@ -232,26 +233,62 @@ class BaseService:
             return False
     
     @staticmethod
+    def _check_ssrf(url: str) -> None:
+        """Block requests to private/loopback IP ranges."""
+        try:
+            parsed = urlparse(url)
+            host = parsed.hostname or ""
+            addr = ipaddress.ip_address(host)
+            private_networks = [
+                ipaddress.ip_network("10.0.0.0/8"),
+                ipaddress.ip_network("172.16.0.0/12"),
+                ipaddress.ip_network("192.168.0.0/16"),
+                ipaddress.ip_network("169.254.0.0/16"),
+                ipaddress.ip_network("127.0.0.0/8"),
+                ipaddress.ip_network("::1/128"),
+                ipaddress.ip_network("fc00::/7"),
+            ]
+            for net in private_networks:
+                if addr in net:
+                    raise ValidationException(
+                        f"SSRF blocked: private/loopback address {host}",
+                        details={"url": url}
+                    )
+        except ValidationException:
+            raise
+        except ValueError:
+            pass
+
+    @staticmethod
     async def fetch(url: str) -> Tuple[str, str, str]:
         """
         获取远程资源并转 Base64
-        
+
         Raises:
             UpstreamException: 当获取失败时
         """
+        BaseService._check_ssrf(url)
         try:
             async with AsyncSession() as session:
-                response = await session.get(url, timeout=10)
+                response = await session.get(url, timeout=30)
                 if response.status_code >= 400:
                     raise UpstreamException(
                         message=f"Failed to fetch resource: {response.status_code}",
                         details={"url": url, "status": response.status_code}
                     )
-                
+
+                content_length = int(response.headers.get("content-length", 0) or 0)
+                content = response.content
+                if len(content) > 10 * 1024 * 1024 or (content_length and content_length > 10 * 1024 * 1024):
+                    raise ValidationException(
+                        "Resource too large (max 10MB)",
+                        details={"url": url}
+                    )
+
                 filename = url.split('/')[-1].split('?')[0] or 'download'
                 content_type = response.headers.get('content-type', DEFAULT_MIME).split(';')[0]
-                b64 = base64.b64encode(response.content).decode()
-                
+                b64 = base64.b64encode(content).decode()
+
                 logger.debug(f"Fetched: {url} -> {filename}")
                 return filename, b64, content_type
         except Exception as e:

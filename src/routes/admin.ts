@@ -57,8 +57,8 @@ import { dbAll, dbFirst, dbRun } from "../db";
 import { nowMs } from "../utils/time";
 import { listUsageForDay, localDayString } from "../repo/apiKeyUsage";
 
-function jsonError(message: string, code: string): Record<string, unknown> {
-  return { error: message, code };
+function adminError(message: string, code: string): Record<string, unknown> {
+  return { success: false, error: { message, code } };
 }
 
 function parseBearer(auth: string | null): string | null {
@@ -218,8 +218,8 @@ function legacyOk(data: Record<string, unknown> = {}): Record<string, unknown> {
   return { status: "success", ...data };
 }
 
-function legacyErr(message: string): Record<string, unknown> {
-  return { status: "error", error: message };
+function legacyErr(message: string, code = "ADMIN_ERROR"): Record<string, unknown> {
+  return { success: false, status: "error", error: message, error_detail: { message, code } };
 }
 
 function toPoolName(tokenType: "sso" | "ssoSuper"): "ssoBasic" | "ssoSuper" {
@@ -1220,7 +1220,7 @@ adminRoutes.post("/api/login", async (c) => {
     const token = await createAdminSession(c.env.DB);
     return c.json({ success: true, token, message: "登录成功" });
   } catch (e) {
-    return c.json(jsonError(`登录失败: ${e instanceof Error ? e.message : String(e)}`, "LOGIN_ERROR"), 500);
+    return c.json(adminError(`登录失败: ${e instanceof Error ? e.message : String(e)}`, "LOGIN_ERROR"), 500);
   }
 });
 
@@ -1230,7 +1230,7 @@ adminRoutes.post("/api/logout", requireAdminAuth, async (c) => {
     if (token) await deleteAdminSession(c.env.DB, token);
     return c.json({ success: true, message: "登出成功" });
   } catch (e) {
-    return c.json(jsonError(`登出失败: ${e instanceof Error ? e.message : String(e)}`, "LOGOUT_ERROR"), 500);
+    return c.json(adminError(`登出失败: ${e instanceof Error ? e.message : String(e)}`, "LOGOUT_ERROR"), 500);
   }
 });
 
@@ -1239,7 +1239,7 @@ adminRoutes.get("/api/settings", requireAdminAuth, async (c) => {
     const settings = await getSettings(c.env);
     return c.json({ success: true, data: settings });
   } catch (e) {
-    return c.json(jsonError(`获取失败: ${e instanceof Error ? e.message : String(e)}`, "GET_SETTINGS_ERROR"), 500);
+    return c.json(adminError(`获取失败: ${e instanceof Error ? e.message : String(e)}`, "GET_SETTINGS_ERROR"), 500);
   }
 });
 
@@ -1249,7 +1249,7 @@ adminRoutes.post("/api/settings", requireAdminAuth, async (c) => {
     await saveSettings(c.env, { global_config: body.global_config, grok_config: body.grok_config });
     return c.json({ success: true, message: "配置更新成功" });
   } catch (e) {
-    return c.json(jsonError(`更新失败: ${e instanceof Error ? e.message : String(e)}`, "UPDATE_SETTINGS_ERROR"), 500);
+    return c.json(adminError(`更新失败: ${e instanceof Error ? e.message : String(e)}`, "UPDATE_SETTINGS_ERROR"), 500);
   }
 });
 
@@ -1263,7 +1263,7 @@ adminRoutes.get("/api/tokens", requireAdminAuth, async (c) => {
     const infos = rows.map(tokenRowToInfo);
     return c.json({ success: true, data: infos, total: infos.length });
   } catch (e) {
-    return c.json(jsonError(`获取失败: ${e instanceof Error ? e.message : String(e)}`, "TOKENS_LIST_ERROR"), 500);
+    return c.json(adminError(`获取失败: ${e instanceof Error ? e.message : String(e)}`, "TOKENS_LIST_ERROR"), 500);
   }
 });
 
@@ -1275,7 +1275,7 @@ adminRoutes.post("/api/tokens/add", requireAdminAuth, async (c) => {
     const count = await addTokens(c.env.DB, tokens, token_type);
     return c.json({ success: true, message: `添加成功(${count})` });
   } catch (e) {
-    return c.json(jsonError(`添加失败: ${e instanceof Error ? e.message : String(e)}`, "TOKENS_ADD_ERROR"), 500);
+    return c.json(adminError(`添加失败: ${e instanceof Error ? e.message : String(e)}`, "TOKENS_ADD_ERROR"), 500);
   }
 });
 
@@ -1287,7 +1287,7 @@ adminRoutes.post("/api/tokens/delete", requireAdminAuth, async (c) => {
     const deleted = await deleteTokens(c.env.DB, tokens, token_type);
     return c.json({ success: true, message: `删除成功(${deleted})` });
   } catch (e) {
-    return c.json(jsonError(`删除失败: ${e instanceof Error ? e.message : String(e)}`, "TOKENS_DELETE_ERROR"), 500);
+    return c.json(adminError(`删除失败: ${e instanceof Error ? e.message : String(e)}`, "TOKENS_DELETE_ERROR"), 500);
   }
 });
 
@@ -1300,7 +1300,7 @@ adminRoutes.post("/api/tokens/tags", requireAdminAuth, async (c) => {
     await updateTokenTags(c.env.DB, token, token_type, tags);
     return c.json({ success: true, message: "标签更新成功", tags });
   } catch (e) {
-    return c.json(jsonError(`更新失败: ${e instanceof Error ? e.message : String(e)}`, "UPDATE_TAGS_ERROR"), 500);
+    return c.json(adminError(`更新失败: ${e instanceof Error ? e.message : String(e)}`, "UPDATE_TAGS_ERROR"), 500);
   }
 });
 
@@ -1313,7 +1313,7 @@ adminRoutes.post("/api/tokens/note", requireAdminAuth, async (c) => {
     await updateTokenNote(c.env.DB, token, token_type, note);
     return c.json({ success: true, message: "备注更新成功", note });
   } catch (e) {
-    return c.json(jsonError(`更新失败: ${e instanceof Error ? e.message : String(e)}`, "UPDATE_NOTE_ERROR"), 500);
+    return c.json(adminError(`更新失败: ${e instanceof Error ? e.message : String(e)}`, "UPDATE_NOTE_ERROR"), 500);
   }
 });
 
@@ -1322,7 +1322,7 @@ adminRoutes.get("/api/tokens/tags/all", requireAdminAuth, async (c) => {
     const tags = await getAllTags(c.env.DB);
     return c.json({ success: true, data: tags });
   } catch (e) {
-    return c.json(jsonError(`获取失败: ${e instanceof Error ? e.message : String(e)}`, "GET_TAGS_ERROR"), 500);
+    return c.json(adminError(`获取失败: ${e instanceof Error ? e.message : String(e)}`, "GET_TAGS_ERROR"), 500);
   }
 });
 
@@ -1398,7 +1398,7 @@ adminRoutes.post("/api/tokens/test", requireAdminAuth, async (c) => {
       data: { valid: false, error_type: "blocked", error_code: 403 },
     });
   } catch (e) {
-    return c.json(jsonError(`测试失败: ${e instanceof Error ? e.message : String(e)}`, "TEST_TOKEN_ERROR"), 500);
+    return c.json(adminError(`测试失败: ${e instanceof Error ? e.message : String(e)}`, "TEST_TOKEN_ERROR"), 500);
   }
 });
 
@@ -1456,7 +1456,7 @@ adminRoutes.post("/api/tokens/refresh-all", requireAdminAuth, async (c) => {
 
     return c.json({ success: true, message: "刷新任务已启动", data: { started: true } });
   } catch (e) {
-    return c.json(jsonError(`刷新失败: ${e instanceof Error ? e.message : String(e)}`, "REFRESH_ALL_ERROR"), 500);
+    return c.json(adminError(`刷新失败: ${e instanceof Error ? e.message : String(e)}`, "REFRESH_ALL_ERROR"), 500);
   }
 });
 
@@ -1465,7 +1465,7 @@ adminRoutes.get("/api/tokens/refresh-progress", requireAdminAuth, async (c) => {
     const progress = await getRefreshProgress(c.env.DB);
     return c.json({ success: true, data: progress });
   } catch (e) {
-    return c.json(jsonError(`获取失败: ${e instanceof Error ? e.message : String(e)}`, "GET_PROGRESS_ERROR"), 500);
+    return c.json(adminError(`获取失败: ${e instanceof Error ? e.message : String(e)}`, "GET_PROGRESS_ERROR"), 500);
   }
 });
 
@@ -1511,7 +1511,7 @@ adminRoutes.get("/api/stats", requireAdminAuth, async (c) => {
     const superStats = calc("ssoSuper");
     return c.json({ success: true, data: { normal, super: superStats, total: normal.total + superStats.total } });
   } catch (e) {
-    return c.json(jsonError(`获取失败: ${e instanceof Error ? e.message : String(e)}`, "STATS_ERROR"), 500);
+    return c.json(adminError(`获取失败: ${e instanceof Error ? e.message : String(e)}`, "STATS_ERROR"), 500);
   }
 });
 
@@ -1520,7 +1520,7 @@ adminRoutes.get("/api/request-stats", requireAdminAuth, async (c) => {
     const stats = await getRequestStats(c.env.DB);
     return c.json({ success: true, data: stats });
   } catch (e) {
-    return c.json(jsonError(`获取失败: ${e instanceof Error ? e.message : String(e)}`, "REQUEST_STATS_ERROR"), 500);
+    return c.json(adminError(`获取失败: ${e instanceof Error ? e.message : String(e)}`, "REQUEST_STATS_ERROR"), 500);
   }
 });
 
@@ -1561,7 +1561,7 @@ adminRoutes.get("/api/v1/admin/keys", requireAdminAuth, async (c) => {
 
     return c.json({ success: true, data });
   } catch (e) {
-    return c.json(jsonError(`获取失败: ${e instanceof Error ? e.message : String(e)}`, "ADMIN_KEYS_LIST_ERROR"), 500);
+    return c.json(adminError(`获取失败: ${e instanceof Error ? e.message : String(e)}`, "ADMIN_KEYS_LIST_ERROR"), 500);
   }
 });
 
@@ -1588,8 +1588,8 @@ adminRoutes.post("/api/v1/admin/keys", requireAdminAuth, async (c) => {
     return c.json({ success: true, data: { ...row, is_active: isActive, display_key: displayKey(row.key) } });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    if (/UNIQUE|constraint/i.test(msg)) return c.json(jsonError("Key 已存在", "KEY_EXISTS"), 400);
-    return c.json(jsonError(`创建失败: ${msg}`, "ADMIN_KEYS_CREATE_ERROR"), 500);
+    if (/UNIQUE|constraint/i.test(msg)) return c.json(adminError("Key 已存在", "KEY_EXISTS"), 400);
+    return c.json(adminError(`创建失败: ${msg}`, "ADMIN_KEYS_CREATE_ERROR"), 500);
   }
 });
 
@@ -1597,9 +1597,9 @@ adminRoutes.post("/api/v1/admin/keys/update", requireAdminAuth, async (c) => {
   try {
     const body = (await c.req.json()) as any;
     const key = String(body?.key ?? "").trim();
-    if (!key) return c.json(jsonError("Missing key", "MISSING_KEY"), 400);
+    if (!key) return c.json(adminError("Missing key", "MISSING_KEY"), 400);
     const existed = await dbFirst<{ key: string }>(c.env.DB, "SELECT key FROM api_keys WHERE key = ?", [key]);
-    if (!existed) return c.json(jsonError("Key not found", "NOT_FOUND"), 404);
+    if (!existed) return c.json(adminError("Key not found", "NOT_FOUND"), 404);
 
     if (body?.name !== undefined) {
       const name = String(body.name ?? "").trim();

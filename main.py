@@ -134,7 +134,7 @@ def create_app() -> FastAPI:
     app.include_router(video_router, prefix="/v1", dependencies=[Depends(verify_api_key)])
     app.include_router(models_router, prefix="/v1", dependencies=[Depends(verify_api_key)])
     app.include_router(uploads_router, prefix="/v1", dependencies=[Depends(verify_api_key)])
-    app.include_router(files_router, prefix="/v1/files")
+    app.include_router(files_router, prefix="/v1/files", dependencies=[Depends(verify_api_key)])
 
     # 静态文件服务
     #

@@ -4,6 +4,8 @@ import { openAiRoutes } from "./routes/openai";
 import { mediaRoutes } from "./routes/media";
 import { adminRoutes } from "./routes/admin";
 import { runKvDailyClear } from "./kv/cleanup";
+import { verifyAdminSession } from "./repo/adminSessions";
+import { getSettings } from "./settings";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -18,12 +20,29 @@ function getBuildSha(env: Env): string {
   return v || "dev";
 }
 
-function isDebugRequest(c: any): boolean {
+async function isDebugRequest(c: any): Promise<boolean> {
   try {
-    return new URL(c.req.url).searchParams.get("debug") === "1";
+    if (new URL(c.req.url).searchParams.get("debug") !== "1") return false;
   } catch {
     return false;
   }
+  const authHeader: string = c.req.header?.("Authorization") ?? c.req.raw?.headers?.get?.("Authorization") ?? "";
+  const m = authHeader.match(/^Bearer\s+(.+)$/i);
+  const token = m?.[1]?.trim();
+  if (!token) return false;
+  try {
+    if (await verifyAdminSession((c.env as Env).DB, token)) return true;
+  } catch {
+    // ignore DB errors
+  }
+  try {
+    const settings = await getSettings(c.env as Env);
+    const globalKey = (settings.grok.api_key ?? "").trim();
+    if (globalKey && token === globalKey) return true;
+  } catch {
+    // ignore
+  }
+  return false;
 }
 
 function withResponseHeaders(res: Response, extra: Record<string, string>): Response {
@@ -68,15 +87,15 @@ async function fetchAsset(c: any, pathname: string): Promise<Response> {
     return withResponseHeaders(res, extra);
   } catch (err) {
     console.error(`ASSETS fetch failed (${pathname}):`, err);
-    const detail = isDebugRequest(c) ? `\n\n${err instanceof Error ? err.stack || err.message : String(err)}` : "";
+    const detail = (await isDebugRequest(c)) ? `\n\n${err instanceof Error ? err.stack || err.message : String(err)}` : "";
     return assetFetchError(`Internal Server Error: failed to fetch asset ${pathname}.${detail}`, buildSha);
   }
 }
 
-app.onError((err, c) => {
+app.onError(async (err, c) => {
   console.error("Unhandled error:", err);
   const buildSha = getBuildSha(c.env as Env);
-  const detail = isDebugRequest(c) ? `\n\n${err instanceof Error ? err.stack || err.message : String(err)}` : "";
+  const detail = (await isDebugRequest(c)) ? `\n\n${err instanceof Error ? err.stack || err.message : String(err)}` : "";
   const res = c.text(`Internal Server Error${detail}`, 500);
   return withResponseHeaders(res, { "x-grok2api-build": buildSha });
 });
@@ -113,7 +132,12 @@ app.get("/manage", (c) => {
   return c.redirect(`/admin/token?v=${encodeURIComponent(buildSha)}`, 302);
 });
 
-app.get("/admin", (c) => c.redirect("/login", 302));
+app.get("/admin", (c) => {
+  const buildSha = getBuildSha(c.env as Env);
+  const v = c.req.query("v") ?? "";
+  if (v !== buildSha) return c.redirect(`/admin?v=${encodeURIComponent(buildSha)}`, 302);
+  return fetchAsset(c, "/admin.html");
+});
 
 app.get("/admin/token", (c) => {
   const buildSha = getBuildSha(c.env as Env);
@@ -203,7 +227,7 @@ app.notFound(async (c) => {
     return withResponseHeaders(res, { "x-grok2api-build": buildSha });
   } catch (err) {
     console.error("ASSETS fetch failed (notFound):", err);
-    const detail = isDebugRequest(c) ? `\n\n${err instanceof Error ? err.stack || err.message : String(err)}` : "";
+    const detail = (await isDebugRequest(c)) ? `\n\n${err instanceof Error ? err.stack || err.message : String(err)}` : "";
     return withResponseHeaders(c.text(`Internal Server Error${detail}`, 500), { "x-grok2api-build": buildSha });
   }
 });

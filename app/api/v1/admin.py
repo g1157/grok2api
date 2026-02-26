@@ -32,9 +32,42 @@ from app.services.token import get_token_manager
 from app.core.auth import _load_legacy_api_keys
 
 
+import secrets
+import threading
+
 router = APIRouter()
 
 TEMPLATE_DIR = Path(__file__).parent.parent.parent / "static"
+
+# Session store: token -> expiry timestamp
+_sessions: dict[str, float] = {}
+_sessions_lock = threading.Lock()
+SESSION_TTL = 3600  # 1 hour
+
+
+def _create_session() -> str:
+    token = secrets.token_hex(32)
+    expiry = time.time() + SESSION_TTL
+    with _sessions_lock:
+        _sessions[token] = expiry
+        _prune_sessions()
+    return token
+
+
+def _prune_sessions():
+    now = time.time()
+    expired = [k for k, v in _sessions.items() if v <= now]
+    for k in expired:
+        del _sessions[k]
+
+
+def verify_session_token(token: str) -> bool:
+    now = time.time()
+    with _sessions_lock:
+        expiry = _sessions.get(token)
+        if expiry is None or expiry <= now:
+            return False
+        return True
 
 
 class AdminLoginBody(BaseModel):
@@ -353,7 +386,8 @@ async def admin_login_api(request: Request, body: AdminLoginBody | None = Body(d
     if username != admin_username or password != admin_password:
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
-    return {"status": "success", "api_key": get_config("app.api_key", "")}
+    session_token = _create_session()
+    return {"status": "success", "session_token": session_token, "expires_in": SESSION_TTL}
 
 @router.get("/api/v1/admin/config", dependencies=[Depends(verify_api_key)])
 async def get_config_api():

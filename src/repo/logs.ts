@@ -20,7 +20,7 @@ export async function addRequestLog(
   entry: Omit<RequestLogRow, "id" | "time" | "timestamp"> & { id?: string },
 ): Promise<void> {
   const ts = nowMs();
-  const id = entry.id ?? String(ts);
+  const id = entry.id ?? `${ts}-${crypto.randomUUID().slice(0, 8)}`;
   const time = formatUtcMs(ts);
   await dbRun(
     db,

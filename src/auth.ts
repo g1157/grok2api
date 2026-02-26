@@ -35,15 +35,18 @@ export const requireApiAuth: MiddlewareHandler<{ Bindings: Env; Variables: { api
   const settings = await getSettings(c.env);
 
   if (!token) {
-    const globalKey = (settings.grok.api_key ?? "").trim();
-    if (!globalKey) {
-      const row = await dbFirst<{ c: number }>(
-        c.env.DB,
-        "SELECT COUNT(1) as c FROM api_keys WHERE is_active = 1",
-      );
-      if ((row?.c ?? 0) === 0) {
-        c.set("apiAuth", { key: null, name: "Anonymous", is_admin: false });
-        return next();
+    const allowAnonymous = String((c.env as any)?.ALLOW_ANONYMOUS ?? "").trim().toLowerCase() === "true";
+    if (allowAnonymous) {
+      const globalKey = (settings.grok.api_key ?? "").trim();
+      if (!globalKey) {
+        const row = await dbFirst<{ c: number }>(
+          c.env.DB,
+          "SELECT COUNT(1) as c FROM api_keys WHERE is_active = 1",
+        );
+        if ((row?.c ?? 0) === 0) {
+          c.set("apiAuth", { key: null, name: "Anonymous", is_admin: false });
+          return next();
+        }
       }
     }
     return c.json(authError("缺少认证令牌", "missing_token"), 401);

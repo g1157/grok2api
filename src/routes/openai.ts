@@ -5,7 +5,7 @@ import { requireApiAuth } from "../auth";
 import { getSettings, normalizeCfCookie } from "../settings";
 import { isValidModel, MODEL_CONFIG } from "../grok/models";
 import { extractContent, buildConversationPayload, sendConversationRequest } from "../grok/conversation";
-import { uploadImage } from "../grok/upload";
+import { uploadImage, isAllowedUrl } from "../grok/upload";
 import { getDynamicHeaders } from "../grok/headers";
 import { createMediaPost, createPost } from "../grok/create";
 import { createOpenAiStreamFromGrokNdjson, parseOpenAiFromGrokNdjson } from "../grok/processor";
@@ -1324,6 +1324,10 @@ openAiRoutes.post("/video/parent-post", async (c) => {
     const sourceHeaders = buildSourceFetchHeaders(imageUrl, origin, incomingAuth);
 
     try {
+      const urlCheck = isAllowedUrl(imageUrl);
+      if (!urlCheck.allowed) {
+        return c.json(openAiError(`Invalid image URL: ${urlCheck.reason}`, "invalid_image_url"), 400);
+      }
       const uploaded = await uploadImage(
         imageUrl,
         cookie,
@@ -1488,6 +1492,15 @@ openAiRoutes.post("/chat/completions", async (c) => {
       const normalizedImgInputs = imgInputs
         .map((u) => normalizeWorkflowImageInput(String(u ?? ""), origin))
         .filter(Boolean);
+
+      for (const u of normalizedImgInputs) {
+        if (/^https?:\/\//i.test(u)) {
+          const urlCheck = isAllowedUrl(u);
+          if (!urlCheck.allowed) {
+            return c.json(openAiError(`Invalid image URL: ${urlCheck.reason}`, "invalid_image_url"), 400);
+          }
+        }
+      }
 
       let stage: "upload" | "create_post" | "conversation" | "parse" = "upload";
       try {

@@ -16,8 +16,12 @@ from datetime import datetime
 # 默认配额
 DEFAULT_QUOTA = 80
 
-# 失败阈值
-FAIL_THRESHOLD = 5
+# 失败阈值（仅 401 计入）
+FAIL_THRESHOLD = 3
+
+# 冷却时间（毫秒）
+COOLDOWN_429_MS = 5 * 60 * 1000
+COOLDOWN_403_MS = 10 * 60 * 1000
 
 
 class TokenStatus(str, Enum):
@@ -60,6 +64,7 @@ class TokenInfo(BaseModel):
     
     # 冷却管理
     last_sync_at: Optional[int] = None  # 上次同步时间
+    cooldown_until: Optional[int] = None  # 冷却截止时间戳（毫秒）
     
     # 扩展
     tags: List[str] = Field(default_factory=list)
@@ -67,8 +72,14 @@ class TokenInfo(BaseModel):
     last_asset_clear_at: Optional[int] = None
     
     def is_available(self) -> bool:
-        """检查是否可用（状态正常且配额 > 0）"""
-        return self.status == TokenStatus.ACTIVE and self.quota > 0
+        """检查是否可用（状态正常且配额 > 0 且不在冷却中）"""
+        if self.status != TokenStatus.ACTIVE or self.quota <= 0:
+            return False
+        if self.cooldown_until is not None:
+            now = int(datetime.now().timestamp() * 1000)
+            if self.cooldown_until > now:
+                return False
+        return True
     
     def consume(self, effort: EffortType = EffortType.LOW) -> int:
         """
@@ -153,19 +164,22 @@ class TokenInfo(BaseModel):
         self.status = TokenStatus.ACTIVE
         self.fail_count = 0
         self.last_fail_reason = None
+        self.cooldown_until = None
     
     def record_fail(self, status_code: int = 401, reason: str = ""):
-        """记录失败，达到阈值后自动标记为 expired"""
-        # 仅 401 错误才计入失败
-        if status_code != 401:
-            return
-        
-        self.fail_count += 1
-        self.last_fail_at = int(datetime.now().timestamp() * 1000)
+        """记录失败，按状态码分流处理"""
+        now = int(datetime.now().timestamp() * 1000)
+        self.last_fail_at = now
         self.last_fail_reason = reason
-        
-        if self.fail_count >= FAIL_THRESHOLD:
-            self.status = TokenStatus.EXPIRED
+
+        if status_code == 401:
+            self.fail_count += 1
+            if self.fail_count >= FAIL_THRESHOLD:
+                self.status = TokenStatus.EXPIRED
+        elif status_code == 429:
+            self.cooldown_until = now + COOLDOWN_429_MS
+        elif status_code == 403:
+            self.cooldown_until = now + COOLDOWN_403_MS
     
     def record_success(self, is_usage: bool = True):
         """记录成功，清空失败计数并根据配额更新状态"""
@@ -218,4 +232,6 @@ __all__ = [
     "EFFORT_COST",
     "DEFAULT_QUOTA",
     "FAIL_THRESHOLD",
+    "COOLDOWN_429_MS",
+    "COOLDOWN_403_MS",
 ]

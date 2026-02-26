@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from app.core.logger import logger
-from app.services.token.models import TokenInfo, EffortType, TokenPoolStats, FAIL_THRESHOLD, TokenStatus
+from app.services.token.models import TokenInfo, EffortType, TokenPoolStats, FAIL_THRESHOLD, TokenStatus, COOLDOWN_429_MS, COOLDOWN_403_MS
 from app.core.storage import get_storage
 from app.core.config import get_config
 from app.services.token.pool import TokenPool
@@ -342,33 +342,41 @@ class TokenManager:
     async def record_fail(self, token_str: str, status_code: int = 401, reason: str = "") -> bool:
         """
         记录 Token 失败
-        
+
         Args:
             token_str: Token 字符串
             status_code: HTTP 状态码
             reason: 失败原因
-            
+
         Returns:
             是否成功
         """
         raw_token = token_str.replace("sso=", "")
-        
+
         for pool in self.pools.values():
             token = pool.get(raw_token)
             if token:
+                token.record_fail(status_code, reason)
                 if status_code == 401:
-                    token.record_fail(status_code, reason)
                     logger.warning(
                         f"Token {raw_token[:10]}...: recorded 401 failure "
                         f"({token.fail_count}/{FAIL_THRESHOLD}) - {reason}"
                     )
+                elif status_code == 429:
+                    logger.info(
+                        f"Token {raw_token[:10]}...: 429 rate-limited, cooldown 5min - {reason}"
+                    )
+                elif status_code == 403:
+                    logger.info(
+                        f"Token {raw_token[:10]}...: 403 forbidden, cooldown 10min - {reason}"
+                    )
                 else:
                     logger.info(
-                        f"Token {raw_token[:10]}...: non-401 error ({status_code}) - {reason} (not counted)"
+                        f"Token {raw_token[:10]}...: non-fatal error ({status_code}) - {reason} (not counted)"
                     )
                 self._schedule_save()
                 return True
-        
+
         logger.warning(f"Token {raw_token[:10]}...: not found for failure record")
         return False
 

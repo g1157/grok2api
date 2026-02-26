@@ -28,7 +28,13 @@ export async function upsertCacheRow(db: Env["DB"], row: CacheRow): Promise<void
   );
 }
 
+const TOUCH_INTERVAL_MS = 60 * 60 * 1000;
+const touchLastAt = new Map<string, number>();
+
 export async function touchCacheRow(db: Env["DB"], key: string, at: number): Promise<void> {
+  const last = touchLastAt.get(key);
+  if (last !== undefined && at - last < TOUCH_INTERVAL_MS && Math.random() >= 0.1) return;
+  touchLastAt.set(key, at);
   await dbRun(db, "UPDATE kv_cache SET last_access_at = ? WHERE key = ?", [at, key]);
 }
 

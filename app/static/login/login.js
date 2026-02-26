@@ -23,7 +23,7 @@ async function login() {
 
     if (res.ok) {
       await storeAppKey({ username, password });
-      window.location.href = '/admin/token';
+      window.location.href = '/admin';
     } else {
       showToast('用户名或密码错误', 'error');
     }
@@ -48,6 +48,6 @@ async function login() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username: usernameInput.value.trim(), password: existingPassword })
   }).then(res => {
-    if (res.ok) window.location.href = '/admin/token';
+    if (res.ok) window.location.href = '/admin';
   });
 })();

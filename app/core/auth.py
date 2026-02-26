@@ -99,9 +99,16 @@ async def verify_api_key(
     api_key = str(get_config("app.api_key", "") or "").strip()
     legacy_keys = await _load_legacy_api_keys()
 
-    # 如果未配置 API Key 且没有 legacy keys，直接放行
+    # 如果未配置 API Key 且没有 legacy keys，检查是否允许匿名访问
     if not api_key and not legacy_keys:
-        return None
+        import os
+        if os.environ.get("ALLOW_ANONYMOUS", "").lower() == "true":
+            return None
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No API keys configured. Set ALLOW_ANONYMOUS=true to allow unauthenticated access.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     if not auth:
         raise HTTPException(

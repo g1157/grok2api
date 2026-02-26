@@ -189,7 +189,12 @@ export function normalizeImageGenerationMethod(value: unknown): string {
   return IMAGE_METHOD_LEGACY;
 }
 
+const SETTINGS_CACHE_KEY = "__settings_bundle__";
+
 export async function getSettings(env: Env): Promise<SettingsBundle> {
+  const cached = (env as unknown as Record<string, unknown>)[SETTINGS_CACHE_KEY];
+  if (cached) return cached as SettingsBundle;
+
   const globalRow = await dbFirst<{ value: string }>(
     env.DB,
     "SELECT value FROM settings WHERE key = ?",
@@ -249,7 +254,7 @@ export async function getSettings(env: Env): Promise<SettingsBundle> {
     mergedGrok.image_generation_method,
   );
 
-  return {
+  const bundle: SettingsBundle = {
     global: { ...DEFAULTS.global, ...globalCfg },
     grok: mergedGrok,
     token: { ...DEFAULTS.token, ...tokenCfg },
@@ -257,6 +262,8 @@ export async function getSettings(env: Env): Promise<SettingsBundle> {
     performance: { ...DEFAULTS.performance, ...performanceCfg },
     register: { ...DEFAULTS.register, ...registerCfg },
   };
+  (env as unknown as Record<string, unknown>)[SETTINGS_CACHE_KEY] = bundle;
+  return bundle;
 }
 
 export async function saveSettings(

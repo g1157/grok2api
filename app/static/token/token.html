@@ -29,7 +29,7 @@
           <h2 class="text-2xl font-semibold tracking-tight">Token 列表</h2>
           <p class="text-[var(--accents-4)] mt-1 text-sm">管理 Grok2API 的 Token 服务号池。</p>
         </div>
-        <div class="flex items-center gap-3 w-full sm:w-auto">
+        <div class="flex flex-wrap items-center gap-3 w-full sm:w-auto">
           <button onclick="openImportModal()" class="geist-button-outline gap-2">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round">
@@ -39,25 +39,8 @@
             </svg>
             导入
           </button>
-          <button id="btn-refresh-nsfw-all" onclick="refreshAllNsfw()" class="geist-button-outline gap-2 hidden">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="23 4 23 10 17 10"></polyline>
-              <polyline points="1 20 1 14 7 14"></polyline>
-              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-            </svg>
-            一键刷新 NSFW
-          </button>
           <button onclick="refreshImagineMonitor()" class="geist-button-outline text-xs px-3">
             Imagine状态
-          </button>
-          <button onclick="reloadImagineSso()" class="geist-button-outline text-xs px-3">
-            重载Imagine
-          </button>
-          <button onclick="addToken()" class="geist-button gap-2">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-            添加
           </button>
         </div>
       </div>
@@ -185,7 +168,7 @@
         </table>
         <div id="loading" class="text-center py-12 text-[var(--accents-4)]">加载中...</div>
         <div id="empty-state" class="hidden text-center py-12 text-[var(--accents-4)]">
-          暂无 Token，请点击右上角导入或添加。
+          暂无 Token，请点击右上角导入。
         </div>
       </div>
 

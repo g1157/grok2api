@@ -676,7 +676,7 @@ function renderTable() {
   loading.classList.add('hidden');
 
   if (flatTokens.length === 0) {
-    emptyState.innerText = '暂无 Token，请点击右上角导入或添加。';
+    emptyState.innerText = '暂无 Token，请点击右上角导入。';
     emptyState.classList.remove('hidden');
     return;
   }
@@ -686,7 +686,7 @@ function renderTable() {
     updateSelectionState();
     return;
   }
-  emptyState.innerText = '暂无 Token，请点击右上角导入或添加。';
+  emptyState.innerText = '暂无 Token，请点击右上角导入。';
   emptyState.classList.add('hidden');
 
   displayTokens.forEach((item) => {

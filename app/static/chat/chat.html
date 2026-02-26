@@ -34,11 +34,10 @@
     <div class="card">
       <div class="card-title">连接配置</div>
       <div class="grid grid-cols-12 gap-3 items-end">
-        <div class="col-span-12 md:col-span-5">
-          <label class="field-label">API Key（Bearer）</label>
-          <input id="api-key-input" type="password" class="geist-input font-mono" placeholder="sk-... 或你自定义的 Key" />
-          <div class="text-xs text-[var(--accents-5)] mt-1">保存在浏览器本地，仅用于调用本服务 /v1/*。</div>
-        </div>
+          <div class="col-span-12 md:col-span-5">
+            <label class="field-label">API Key（Bearer）</label>
+            <input id="api-key-input" type="password" class="geist-input font-mono h-[34px]" placeholder="sk-... 或你自定义的 Key" />
+          </div>
         <div class="col-span-12 md:col-span-4">
           <label class="field-label">模型</label>
           <select id="model-select" class="geist-input h-[34px]"></select>
@@ -52,6 +51,7 @@
           <button class="geist-button-danger text-xs px-3" onclick="clearApiKey()">清除</button>
         </div>
       </div>
+      <div class="text-xs text-[var(--accents-5)] mt-2">保存在浏览器本地，仅用于调用本服务 /v1/*。</div>
     </div>
 
     <div class="card">

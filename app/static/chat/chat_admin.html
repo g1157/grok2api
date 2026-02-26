@@ -27,8 +27,7 @@
       <div class="grid grid-cols-12 gap-3 items-end">
         <div class="col-span-12 md:col-span-5">
           <label class="field-label">API Key（Bearer）</label>
-          <input id="api-key-input" type="password" class="geist-input font-mono" placeholder="优先从后台配置自动填充，可手动覆盖" />
-          <div class="text-xs text-[var(--accents-5)] mt-1">后台入口会尝试读取“配置管理 -> API 密钥”自动填充。</div>
+          <input id="api-key-input" type="password" class="geist-input font-mono h-[34px]" placeholder="优先从后台配置自动填充，可手动覆盖" />
         </div>
         <div class="col-span-12 md:col-span-4">
           <label class="field-label">模型</label>
@@ -43,6 +42,7 @@
           <button class="geist-button-danger text-xs px-3" onclick="clearApiKey()">清除</button>
         </div>
       </div>
+      <div class="text-xs text-[var(--accents-5)] mt-2">后台入口会尝试读取“配置管理 -> API 密钥”自动填充。</div>
     </div>
 
     <div class="card">

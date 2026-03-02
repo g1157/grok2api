@@ -1,7 +1,17 @@
 let apiKey = null;
-const WORKFLOW_STORAGE_KEY = 'grok2api_workflow_state_v2';
+let WORKFLOW_STORAGE_KEY = 'grok2api_workflow_state_v2';
 let workflowApiBearer = '';
 const imagineEmbedded = new URLSearchParams(window.location.search).get('embedded') === '1';
+
+function deriveStorageKeySuffix(key) {
+  const raw = String(key || '').replace(/^Bearer\s+/i, '').trim();
+  if (!raw) return '';
+  let hash = 0;
+  for (let i = 0; i < raw.length; i++) {
+    hash = ((hash << 5) - hash + raw.charCodeAt(i)) | 0;
+  }
+  return '_' + (hash >>> 0).toString(36);
+}
 
 let workflowBusy = false;
 let workflowState = normalizeWorkflowState({});
@@ -20,6 +30,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   applyEmbeddedMode();
   apiKey = await ensureApiKey();
   if (!apiKey) return;
+  WORKFLOW_STORAGE_KEY = 'grok2api_workflow_state_v2' + deriveStorageKeySuffix(apiKey);
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') closeLightbox();
   });

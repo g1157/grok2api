@@ -1,5 +1,15 @@
 const STORAGE_KEY = 'grok2api_user_api_key';
-const WORKFLOW_STORAGE_KEY = 'grok2api_workflow_state_v2';
+let WORKFLOW_STORAGE_KEY = 'grok2api_workflow_state_v2';
+
+function deriveStorageKeySuffix(key) {
+  const raw = String(key || '').replace(/^Bearer\s+/i, '').trim();
+  if (!raw) return '';
+  let hash = 0;
+  for (let i = 0; i < raw.length; i++) {
+    hash = ((hash << 5) - hash + raw.charCodeAt(i)) | 0;
+  }
+  return '_' + (hash >>> 0).toString(36);
+}
 
 let currentTab = 'chat';
 let models = [];
@@ -553,6 +563,8 @@ async function init() {
 
   const saved = localStorage.getItem(STORAGE_KEY) || '';
   if (!q('api-key-input').value) q('api-key-input').value = saved;
+  const effectiveKey = q('api-key-input').value || saved || imagineAdminSessionAuth || '';
+  WORKFLOW_STORAGE_KEY = 'grok2api_workflow_state_v2' + deriveStorageKeySuffix(effectiveKey);
   loadWorkflowState();
 
   bindFileInputs();
@@ -2005,8 +2017,10 @@ async function refreshModels() {
     const data = await res.json();
     models = Array.isArray(data?.data) ? data.data : [];
 
+    const imagineTabModelIds = new Set(['grok-imagine', 'grok-imagine-1.0']);
     const filtered = models.filter((m) => {
       const id = String(m.id || '');
+      if (currentTab === 'imagine') return imagineTabModelIds.has(id);
       if (currentTab === 'image') return id === 'grok-imagine-1.0';
       if (currentTab === 'edit') return id === 'grok-imagine-1.0-edit';
       if (currentTab === 'video') return id === 'grok-imagine-1.0-video';
@@ -2024,6 +2038,14 @@ async function refreshModels() {
       sel.appendChild(opt);
     });
 
+    if (currentTab === 'imagine') {
+      if (filteredIds.includes('grok-imagine')) {
+        sel.value = 'grok-imagine';
+      } else {
+        sel.value = filteredIds.includes('grok-imagine-1.0') ? 'grok-imagine-1.0' : (filteredIds[0] || '');
+      }
+      return;
+    }
     if (currentTab === 'image') {
       sel.value = filteredIds.includes('grok-imagine-1.0') ? 'grok-imagine-1.0' : (filteredIds[0] || '');
       return;

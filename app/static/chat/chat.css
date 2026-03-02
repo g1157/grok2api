@@ -886,6 +886,17 @@
     column-count: 1;
   }
 
+  .workflow-parent code {
+    max-width: 100%;
+    white-space: normal;
+    word-break: break-all;
+    overflow-wrap: break-word;
+  }
+
+  .clip-cap-note {
+    white-space: normal;
+  }
+
   .imagine-metrics {
     grid-template-columns: 1fr;
   }

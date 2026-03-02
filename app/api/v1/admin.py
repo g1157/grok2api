@@ -133,14 +133,18 @@ async def admin_chat_page():
 
 
 async def _verify_ws_api_key(websocket: WebSocket) -> bool:
+    import hmac as _hmac
     api_key = str(get_config("app.api_key", "") or "").strip()
     legacy_keys = await _load_legacy_api_keys()
     if not api_key and not legacy_keys:
-        return True
+        import os
+        if os.environ.get("ALLOW_ANONYMOUS", "").lower() == "true":
+            return True
+        return False
     token = str(websocket.query_params.get("api_key") or "").strip()
     if not token:
         return False
-    if (api_key and token == api_key) or token in legacy_keys:
+    if (api_key and _hmac.compare_digest(token, api_key)) or token in legacy_keys:
         return True
     try:
         await api_key_manager.init()
@@ -391,9 +395,19 @@ async def admin_login_api(request: Request, body: AdminLoginBody | None = Body(d
 
 @router.get("/api/v1/admin/config", dependencies=[Depends(verify_api_key)])
 async def get_config_api():
-    """获取当前配置"""
-    # 暴露原始配置字典
-    return config._config
+    """获取当前配置（敏感字段脱敏）"""
+    import copy
+    _SENSITIVE_KEYS = {"api_key", "app_key", "cf_clearance", "admin_password", "yescaptcha_key", "password"}
+    raw = config._config
+    masked = copy.deepcopy(raw) if isinstance(raw, dict) else raw
+    if isinstance(masked, dict):
+        for section in masked.values():
+            if not isinstance(section, dict):
+                continue
+            for k in section:
+                if k in _SENSITIVE_KEYS and section[k]:
+                    section[k] = "***"
+    return masked
 
 @router.post("/api/v1/admin/config", dependencies=[Depends(verify_api_key)])
 async def update_config_api(data: dict):

@@ -20,53 +20,50 @@ class TokenRefreshScheduler:
     async def _refresh_loop(self):
         """刷新循环"""
         logger.info(f"Scheduler: started (interval: {self.interval_hours}h)")
-        
+
         while self._running:
             try:
                 await asyncio.sleep(self.interval_seconds)
                 storage = get_storage()
-                lock_acquired = False
-                lock = None
 
                 if isinstance(storage, RedisStorage):
-                    # Redis: non-blocking lock to avoid multi-worker duplication
                     lock_key = "grok2api:lock:token_refresh"
                     lock = storage.redis.lock(lock_key, timeout=self.interval_seconds + 60, blocking_timeout=0)
                     lock_acquired = await lock.acquire(blocking=False)
-                else:
+                    if not lock_acquired:
+                        logger.info("Scheduler: skipped (lock not acquired)")
+                        continue
                     try:
-                        async with storage.acquire_lock("token_refresh", timeout=0):
-                            lock_acquired = True
-                    except StorageError:
-                        lock_acquired = False
-
-                if not lock_acquired:
-                    logger.info("Scheduler: skipped (lock not acquired)")
-                    continue
-
-                try:
-                    logger.info("Scheduler: starting token refresh...")
-                    manager = await get_token_manager()
-                    result = await manager.refresh_cooling_tokens()
-                    
-                    logger.info(
-                        f"Scheduler: refresh completed - "
-                        f"checked={result['checked']}, "
-                        f"refreshed={result['refreshed']}, "
-                        f"recovered={result['recovered']}, "
-                        f"expired={result['expired']}"
-                    )
-                finally:
-                    if lock is not None and lock_acquired:
+                        await self._do_refresh()
+                    finally:
                         try:
                             await lock.release()
                         except Exception:
                             pass
-                
+                else:
+                    try:
+                        async with storage.acquire_lock("token_refresh", timeout=0):
+                            await self._do_refresh()
+                    except StorageError:
+                        logger.info("Scheduler: skipped (lock not acquired)")
+                        continue
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Scheduler: refresh error - {e}")
+
+    async def _do_refresh(self):
+        logger.info("Scheduler: starting token refresh...")
+        manager = await get_token_manager()
+        result = await manager.refresh_cooling_tokens()
+        logger.info(
+            f"Scheduler: refresh completed - "
+            f"checked={result['checked']}, "
+            f"refreshed={result['refreshed']}, "
+            f"recovered={result['recovered']}, "
+            f"expired={result['expired']}"
+        )
     
     def start(self):
         """启动调度器"""

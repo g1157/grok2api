@@ -327,7 +327,7 @@ class GrokChatService:
                     try:
                         content = await response.text()
                         content = content[:1000] # 限制长度避免日志过大
-                    except:
+                    except Exception:
                         content = "Unable to read response content"
 
                     logger.error(
@@ -337,7 +337,7 @@ class GrokChatService:
                     # 关闭 session 并抛出异常
                     try:
                         await session.close()
-                    except:
+                    except Exception:
                         pass
                     raise UpstreamException(
                         message=f"Grok API request failed: {response.status_code}",

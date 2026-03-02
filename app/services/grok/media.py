@@ -284,7 +284,7 @@ class VideoService:
                     logger.error(f"Video generation failed: {response.status_code}")
                     try:
                         await session.close()
-                    except:
+                    except Exception:
                         pass
                     raise UpstreamException(
                         message=f"Video generation failed: {response.status_code}",
@@ -306,7 +306,7 @@ class VideoService:
                 if session:
                     try:
                         await session.close()
-                    except:
+                    except Exception:
                         pass
                 logger.error(f"Video generation error: {e}")
                 if isinstance(e, AppException):
@@ -376,7 +376,7 @@ class VideoService:
                     logger.error(f"Video from image failed: {response.status_code}")
                     try:
                         await session.close()
-                    except:
+                    except Exception:
                         pass
                     raise UpstreamException(
                         message=f"Video from image failed: {response.status_code}",
@@ -398,7 +398,7 @@ class VideoService:
                 if session:
                     try:
                         await session.close()
-                    except:
+                    except Exception:
                         pass
                 logger.error(f"Video from image error: {e}")
                 if isinstance(e, AppException):

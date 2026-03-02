@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import random
+import secrets
 import re
 import string
 import struct
@@ -63,7 +64,7 @@ def _generate_random_name() -> str:
 
 
 def _generate_random_string(length: int = 15) -> str:
-    return "".join(random.choice(string.ascii_lowercase + string.digits) for _ in range(length))
+    return "".join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(length))
 
 
 def _encode_grpc_message(field_id: int, string_value: str) -> bytes:

@@ -71,6 +71,15 @@ async def lifespan(app: FastAPI):
     logger.info(f"Platform: {platform.system()} {platform.release()}")
     logger.info(f"Python: {sys.version.split()[0]}")
 
+    # 2.1 检测默认弱口令
+    _app_key = str(get_config("app.app_key", "") or "").strip()
+    _admin_user = str(get_config("app.admin_username", "") or "").strip()
+    if _app_key == "admin" or _admin_user == "admin":
+        logger.warning(
+            "⚠️  SECURITY WARNING: Default admin credentials detected (admin/admin). "
+            "Please change app.app_key and app.admin_username in your config immediately!"
+        )
+
     # 3. 启动 Token 刷新调度器
     refresh_enabled = get_config("token.auto_refresh", True)
     if refresh_enabled:
@@ -113,11 +122,39 @@ def create_app() -> FastAPI:
     async def health():
         return {"status": "healthy", "service": "Grok2API", "runtime": "python-fastapi"}
 
+    @app.get("/ready")
+    async def ready():
+        checks = {}
+        try:
+            from app.core.storage import get_storage
+            storage = get_storage()
+            await storage.load_config()
+            checks["storage"] = "ok"
+        except Exception as e:
+            checks["storage"] = f"error: {e}"
+        try:
+            from app.services.token.manager import get_token_manager
+            mgr = await get_token_manager()
+            total = sum(p.count() for p in mgr.pools.values())
+            active = sum(p.get_stats().active for p in mgr.pools.values())
+            checks["tokens"] = {"total": total, "active": active}
+        except Exception as e:
+            checks["tokens"] = f"error: {e}"
+        all_ok = all(v == "ok" or isinstance(v, dict) for v in checks.values())
+        status_code = 200 if all_ok else 503
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"status": "ready" if all_ok else "degraded", "checks": checks}, status_code=status_code)
+
     # CORS 配置
+    cors_origins = str(get_config("app.cors_origins", "*") or "*").strip()
+    if cors_origins == "*":
+        allowed_origins = ["*"]
+    else:
+        allowed_origins = [o.strip() for o in cors_origins.split(",") if o.strip()]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
+        allow_origins=allowed_origins,
+        allow_credentials=cors_origins != "*",
         allow_methods=["*"],
         allow_headers=["*"],
     )

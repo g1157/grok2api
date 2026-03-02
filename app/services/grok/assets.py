@@ -229,16 +229,16 @@ class BaseService:
         try:
             result = urlparse(input_str)
             return all([result.scheme, result.netloc]) and result.scheme in ['http', 'https']
-        except:
+        except Exception:
             return False
     
     @staticmethod
     def _check_ssrf(url: str) -> None:
-        """Block requests to private/loopback IP ranges."""
+        """Block requests to private/loopback IP ranges (including DNS resolution)."""
+        import socket
         try:
             parsed = urlparse(url)
             host = parsed.hostname or ""
-            addr = ipaddress.ip_address(host)
             private_networks = [
                 ipaddress.ip_network("10.0.0.0/8"),
                 ipaddress.ip_network("172.16.0.0/12"),
@@ -248,15 +248,25 @@ class BaseService:
                 ipaddress.ip_network("::1/128"),
                 ipaddress.ip_network("fc00::/7"),
             ]
-            for net in private_networks:
-                if addr in net:
-                    raise ValidationException(
-                        f"SSRF blocked: private/loopback address {host}",
-                        details={"url": url}
-                    )
+            addrs_to_check = []
+            try:
+                addrs_to_check.append(ipaddress.ip_address(host))
+            except ValueError:
+                try:
+                    for _, _, _, _, sockaddr in socket.getaddrinfo(host, None):
+                        addrs_to_check.append(ipaddress.ip_address(sockaddr[0]))
+                except socket.gaierror:
+                    pass
+            for addr in addrs_to_check:
+                for net in private_networks:
+                    if addr in net:
+                        raise ValidationException(
+                            f"SSRF blocked: private/loopback address {addr}",
+                            details={"url": url}
+                        )
         except ValidationException:
             raise
-        except ValueError:
+        except Exception:
             pass
 
     @staticmethod
@@ -545,7 +555,7 @@ class DeleteService(BaseService):
                     if asset_id:
                         try:
                             return await self.delete(token, asset_id)
-                        except:
+                        except Exception:
                             return False
                     return False
 
@@ -853,7 +863,7 @@ class DownloadService(BaseService):
                                 stat = f.stat()
                                 total_size += stat.st_size
                                 all_files.append((f, stat.st_mtime, stat.st_size))
-                            except:
+                            except Exception:
                                 pass
                 
                 current_mb = total_size / 1024 / 1024

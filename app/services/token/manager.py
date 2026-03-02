@@ -76,9 +76,8 @@ class TokenManager:
                         except Exception as e:
                             logger.warning(f"Failed to load token in pool '{pool_name}': {e}")
                             continue
-                    pool._rebuild_index()
                     self.pools[pool_name] = pool
-                    
+
                 self.initialized = True
                 self._last_reload_at = time.monotonic()
                 total = sum(p.count() for p in self.pools.values())

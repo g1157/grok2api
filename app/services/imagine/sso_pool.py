@@ -1,6 +1,7 @@
+import asyncio
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -53,7 +54,8 @@ class ImagineSSOPool:
         self._tokens = self._get_tokens_from_manager()
         if STATE_FILE.exists():
             try:
-                data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+                raw = STATE_FILE.read_text(encoding="utf-8")
+                data = json.loads(raw)
                 for token, s in data.items():
                     state = SSOState()
                     state.usage_count = s.get("usage_count", 0)
@@ -84,12 +86,13 @@ class ImagineSSOPool:
                 "last_reset_date": s.last_reset_date,
             }
         try:
-            STATE_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            content = json.dumps(data, indent=2)
+            STATE_FILE.write_text(content, encoding="utf-8")
         except Exception as e:
             logger.warning(f"Failed to save imagine SSO state: {e}")
 
     def _check_daily_reset(self, state: SSOState):
-        today = datetime.utcnow().strftime("%Y-%m-%d")
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         if state.last_reset_date != today:
             state.daily_count = 0
             state.last_reset_date = today
@@ -178,7 +181,7 @@ class ImagineSSOPool:
     def reset_daily_usage(self):
         for state in self._states.values():
             state.daily_count = 0
-            state.last_reset_date = datetime.utcnow().strftime("%Y-%m-%d")
+            state.last_reset_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         self._save_state()
 
     def get_age_verified(self, token: str) -> bool:

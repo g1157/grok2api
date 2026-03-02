@@ -289,7 +289,7 @@ class RedisStorage(BaseStorage):
                 
                 try:
                     val = json_loads(val_str)
-                except:
+                except Exception:
                     val = val_str
                 config[section][key] = val
             return config
@@ -354,13 +354,13 @@ class RedisStorage(BaseStorage):
                 # 恢复 tags (JSON -> List)
                 if "tags" in t_data:
                     try: t_data["tags"] = json_loads(t_data["tags"])
-                    except: t_data["tags"] = []
-                
+                    except Exception: t_data["tags"] = []
+
                 # 类型转换 (Redis 返回全 string)
                 for int_field in ["quota", "created_at", "use_count", "fail_count", "last_used_at", "last_fail_at", "last_sync_at"]:
                     if t_data.get(int_field) and t_data[int_field] != "None":
                          try: t_data[int_field] = int(t_data[int_field])
-                         except: pass
+                         except Exception: pass
                          
                 token_lookup[tid] = t_data
 
@@ -598,7 +598,7 @@ class SQLStorage(BaseStorage):
                     if section not in config: config[section] = {}
                     try:
                         val = json_loads(val_str)
-                    except:
+                    except Exception:
                         val = val_str
                     config[section][key] = val
                 return config
@@ -649,8 +649,8 @@ class SQLStorage(BaseStorage):
                         else:
                             t_data = data_json
                         pools[pool_name].append(t_data)
-                    except:
-                        pass
+                    except Exception as e:
+                        logger.warning(f"SQLStorage: failed to parse token row: {e}")
                 return pools
         except Exception as e:
             logger.error(f"SQLStorage: 加载 Token 失败: {e}")
@@ -661,25 +661,24 @@ class SQLStorage(BaseStorage):
         from sqlalchemy import text
         try:
             async with self.async_session() as session:
-                await session.execute(text("DELETE FROM tokens")) 
-                
-                params = []
-                for pool_name, tokens in data.items():
-                    for t in tokens:
-                        params.append({
-                            "token": t.get("token"),
-                            "pool_name": pool_name,
-                            "data": json_dumps(t),
-                            "updated_at": 0
-                        })
-                
-                if params:
-                    # 批量插入
-                    await session.execute(
-                        text("INSERT INTO tokens (token, pool_name, data, updated_at) VALUES (:token, :pool_name, :data, :updated_at)"),
-                        params
-                    )
-                await session.commit()
+                async with session.begin():
+                    await session.execute(text("DELETE FROM tokens"))
+
+                    params = []
+                    for pool_name, tokens in data.items():
+                        for t in tokens:
+                            params.append({
+                                "token": t.get("token"),
+                                "pool_name": pool_name,
+                                "data": json_dumps(t),
+                                "updated_at": 0
+                            })
+
+                    if params:
+                        await session.execute(
+                            text("INSERT INTO tokens (token, pool_name, data, updated_at) VALUES (:token, :pool_name, :data, :updated_at)"),
+                            params
+                        )
         except Exception as e:
             logger.error(f"SQLStorage: 保存 Token 失败: {e}")
             raise

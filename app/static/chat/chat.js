@@ -826,7 +826,7 @@ function renderWorkflowGallery() {
     const active = workflowState.selectedImage === item.src;
     card.className = `workflow-gallery-item${active ? ' is-active' : ''}`;
     card.innerHTML = `
-      <img src="${item.src}" alt="workflow-image" />
+      <img src="${escapeHtml(toAbsoluteUrl(item.src))}" alt="workflow-image" />
       <div class="workflow-gallery-meta">${escapeHtml(item.origin || 'image')}</div>
       <div class="workflow-gallery-actions">
         <button type="button" class="wf-btn-select">选中</button>

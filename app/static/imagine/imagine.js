@@ -318,16 +318,16 @@ async function loadSsoStatus() {
 
     tbody.innerHTML = tokens.map((t) => `
       <tr>
-        <td class="font-mono text-xs">${t.token || '***'}</td>
-        <td>${t.daily_count ?? 0}</td>
-        <td>${Math.max(0, (t.daily_limit || 50) - (t.daily_count || 0))}</td>
+        <td class="font-mono text-xs">${escapeHtml(t.token || '***')}</td>
+        <td>${Number(t.daily_count ?? 0)}</td>
+        <td>${Math.max(0, Number(t.daily_limit || 50) - Number(t.daily_count || 0))}</td>
         <td><span class="imagine-badge ${t.fail_count > 0 ? 'imagine-badge-fail' : 'imagine-badge-ok'}">${t.fail_count > 0 ? '失败' : '正常'}</span></td>
         <td class="text-xs text-[var(--accents-4)]">${t.available ? '可用' : '不可用'}</td>
       </tr>
     `).join('');
   } catch (e) {
     document.getElementById('sso-tbody').innerHTML =
-      `<tr><td colspan="5" class="text-center text-[var(--error)] py-4">加载失败: ${e.message}</td></tr>`;
+      `<tr><td colspan="5" class="text-center text-[var(--error)] py-4">加载失败: ${escapeHtml(e.message)}</td></tr>`;
   }
 }
 

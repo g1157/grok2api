@@ -859,7 +859,7 @@ function renderLocalCacheList(type, items) {
   const selected = selectedLocal[type];
   body.innerHTML = items.map(item => {
     const timeText = formatTime(item.mtime_ms);
-    const preview = item.preview_url ? `<img src="${item.preview_url}" alt="" class="cache-preview">` : '';
+    const preview = item.preview_url ? `<img src="${escapeHtml(item.preview_url)}" alt="" class="cache-preview">` : '';
     const checked = selected.has(item.name) ? 'checked' : '';
     const rowClass = selected.has(item.name) ? 'row-selected' : '';
     return `

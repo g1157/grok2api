@@ -1,6 +1,7 @@
 """Token 池管理"""
 
-import random
+import secrets
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Iterator
 
 from app.services.token.models import TokenInfo, TokenStatus, TokenPoolStats
@@ -28,20 +29,28 @@ class TokenPool:
         """获取 Token"""
         return self._tokens.get(token_str)
         
+    @staticmethod
+    def _not_in_cooldown(t: TokenInfo) -> bool:
+        if t.cooldown_until is None:
+            return True
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        return t.cooldown_until < now_ms
+
     def select(self, bucket: str = "normal") -> Optional[TokenInfo]:
         """
         选择一个可用 Token
-        策略: 
-        1. 选择 active 状态且有配额的 token
+        策略:
+        1. 选择 active 状态且有配额的 token（排除冷却中的）
         2. 优先选择剩余额度最多的
         3. 如果额度相同，随机选择（避免并发冲突）
         """
-        # 选择 token
         if bucket == "heavy":
             available = [
                 t
                 for t in self._tokens.values()
-                if t.status in (TokenStatus.ACTIVE, TokenStatus.COOLING) and t.heavy_quota != 0
+                if t.status in (TokenStatus.ACTIVE, TokenStatus.COOLING)
+                and t.heavy_quota != 0
+                and self._not_in_cooldown(t)
             ]
 
             if not available:
@@ -49,28 +58,24 @@ class TokenPool:
 
             unknown = [t for t in available if t.heavy_quota < 0]
             if unknown:
-                return random.choice(unknown)
+                return secrets.choice(unknown)
 
             max_quota = max(t.heavy_quota for t in available)
             candidates = [t for t in available if t.heavy_quota == max_quota]
-            return random.choice(candidates)
+            return secrets.choice(candidates)
 
         available = [
-            t for t in self._tokens.values() 
+            t for t in self._tokens.values()
             if t.status == TokenStatus.ACTIVE and t.quota > 0
+            and self._not_in_cooldown(t)
         ]
-        
+
         if not available:
             return None
-            
-        # 找到最大额度
+
         max_quota = max(t.quota for t in available)
-        
-        # 筛选最大额度
         candidates = [t for t in available if t.quota == max_quota]
-        
-        # 随机选择
-        return random.choice(candidates)
+        return secrets.choice(candidates)
         
     def count(self) -> int:
         """Token 数量"""
@@ -100,11 +105,7 @@ class TokenPool:
             stats.avg_quota = stats.total_quota / stats.total
             
         return stats
-        
-    def _rebuild_index(self):
-        """重建索引（预留接口，用于加载时调用）"""
-        pass
-        
+
     def __iter__(self) -> Iterator[TokenInfo]:
         return iter(self._tokens.values())
 

@@ -16,8 +16,8 @@ from datetime import datetime
 # 默认配额
 DEFAULT_QUOTA = 80
 
-# 失败阈值（仅 401 计入）
-FAIL_THRESHOLD = 3
+# 失败阈值（仅 401 计入），与 config.defaults.toml token.fail_threshold 保持一致
+FAIL_THRESHOLD = 5
 
 # 冷却时间（毫秒）
 COOLDOWN_429_MS = 5 * 60 * 1000

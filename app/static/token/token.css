@@ -203,6 +203,15 @@
       align-items: flex-start;
     }
 
+    .token-top-actions {
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .token-top-actions .geist-button-outline {
+      white-space: nowrap;
+    }
+
     #batch-actions {
       background: rgba(255, 255, 255, 0.92);
       border: 1px solid var(--border);
@@ -297,6 +306,16 @@
 
       #token-filter-bar .filter-summary .geist-button-outline {
         width: 100%;
+      }
+
+      .token-top-actions {
+        width: 100%;
+        justify-content: flex-start;
+      }
+
+      .token-top-actions .geist-button-outline {
+        flex: 1 1 calc(50% - 8px);
+        justify-content: center;
       }
 
       #batch-actions {

@@ -10,7 +10,7 @@
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-sans/style.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-mono/style.css" rel="stylesheet">
   <link href="/static/common/common.css?v=3" rel="stylesheet">
-  <link href="/static/token/token.css?v=14" rel="stylesheet">
+  <link href="/static/token/token.css?v=15" rel="stylesheet">
   <link href="/static/common/toast.css" rel="stylesheet">
 </head>
 
@@ -29,7 +29,7 @@
           <h2 class="text-2xl font-semibold tracking-tight">Token 列表</h2>
           <p class="text-[var(--accents-4)] mt-1 text-sm">管理 Grok2API 的 Token 服务号池。</p>
         </div>
-        <div class="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+        <div class="token-top-actions flex flex-wrap items-center gap-3 w-full sm:w-auto">
           <button onclick="openImportModal()" class="geist-button-outline gap-2">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round">
@@ -40,7 +40,10 @@
             导入
           </button>
           <button onclick="refreshImagineMonitor()" class="geist-button-outline text-xs px-3">
-            Imagine状态
+            一键刷新Imagine状态
+          </button>
+          <button onclick="reloadImagineSso()" class="geist-button-outline text-xs px-3">
+            重载Imagine
           </button>
         </div>
       </div>
@@ -383,7 +386,7 @@
   <script src="/static/common/header.js?v=4"></script>
   <script src="/static/common/footer.js?v=1"></script>
   <script src="/static/common/toast.js"></script>
-  <script src="/static/token/token.js?v=19"></script>
+  <script src="/static/token/token.js?v=20"></script>
 </body>
 
 </html>

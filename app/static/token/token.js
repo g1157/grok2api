@@ -291,10 +291,6 @@ async function startBatchNsfwWithTokens(tokens, options = {}) {
   batchProcessed = 0;
   batchNsfwStats = { success: 0, failed: 0, invalidated: 0 };
 
-  // Also lock the top "refresh all" button when a NSFW batch is running.
-  const btn = document.getElementById('btn-refresh-nsfw-all');
-  if (btn) btn.disabled = true;
-
   updateBatchProgress();
   setActionButtonsState();
   processNsfwQueue();
@@ -459,13 +455,7 @@ function setAutoRegisterUiEnabled(enabled) {
 }
 
 function setNsfwRefreshUiEnabled(enabled) {
-  const btn = document.getElementById('btn-refresh-nsfw-all');
   const batchBtn = document.getElementById('btn-batch-nsfw');
-  if (btn) {
-    if (enabled) btn.classList.remove('hidden');
-    else btn.classList.add('hidden');
-  }
-  // Batch NSFW button uses the same backend capability.
   if (batchBtn) {
     batchBtn.style.display = enabled ? '' : 'none';
   }
@@ -1552,9 +1542,6 @@ function finishBatchProcess(aborted = false) {
   isBatchPaused = false;
   batchQueue = [];
   currentBatchAction = null;
-
-  const btn = document.getElementById('btn-refresh-nsfw-all');
-  if (btn) btn.disabled = false;
 
   updateBatchProgress();
   setActionButtonsState();

@@ -2632,8 +2632,9 @@ async function generateVideo() {
   const videoConfig = {
     aspect_ratio: String(q('video-aspect').value || '3:2'),
     video_length: Number(q('video-length').value || 6),
-    resolution: String(q('video-resolution').value || 'SD'),
-    preset: String(q('video-preset').value || 'custom'),
+    // Keep a single stable output profile to maximize playback compatibility.
+    resolution: 'SD',
+    preset: 'normal',
     parent_post_id: '',
     nsfw_enabled: workflowState.nsfwEnabled !== false,
   };

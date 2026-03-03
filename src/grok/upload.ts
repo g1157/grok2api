@@ -183,6 +183,7 @@ export async function uploadImage(
 
     let okResponse: Response | null = null;
     let lastStatus = 0;
+    let lastErrorText = "";
     for (const candidate of candidates) {
       const r = await fetch(candidate, requestInit);
       if (r.status >= 300 && r.status < 400) {
@@ -201,10 +202,7 @@ export async function uploadImage(
             break;
           }
           lastStatus = r2.status;
-          if (r2.status !== 404) {
-            const text = await r2.text().catch(() => "");
-            throw new Error(`下载图片失败: ${r2.status} ${text.slice(0, 120)}`);
-          }
+          lastErrorText = await r2.text().catch(() => "");
           continue;
         }
       }
@@ -217,14 +215,11 @@ export async function uploadImage(
         break;
       }
       lastStatus = r.status;
-      if (r.status !== 404) {
-        const text = await r.text().catch(() => "");
-        throw new Error(`下载图片失败: ${r.status} ${text.slice(0, 120)}`);
-      }
+      lastErrorText = await r.text().catch(() => "");
     }
 
     if (!okResponse) {
-      throw new Error(`下载图片失败: ${lastStatus || 404}`);
+      throw new Error(`下载图片失败: ${lastStatus || 404} ${lastErrorText.slice(0, 120)}`.trim());
     }
     mime = okResponse.headers.get("content-type")?.split(";")[0] ?? MIME_DEFAULT;
     if (!mime.startsWith("image/")) mime = MIME_DEFAULT;

@@ -1190,10 +1190,17 @@
 
     const apiRequest = async (u, o = {}) => {
       const t = localStorage.getItem('adminToken');
-      if (!t && !u.includes('/login')) return window.location.href = '/login';
+      if (!t && !u.includes('/login')) {
+        window.location.href = '/login';
+        return null;
+      }
       if (t) o.headers = { ...o.headers, 'Authorization': `Bearer ${t}`, 'Content-Type': 'application/json' };
       const r = await fetch(u, o);
-      if (r.status === 401 && !u.includes('/login')) return localStorage.removeItem('adminToken'), window.location.href = '/login';
+      if (r.status === 401 && !u.includes('/login')) {
+        localStorage.removeItem('adminToken');
+        window.location.href = '/login';
+        return null;
+      }
       return r;
     };
 

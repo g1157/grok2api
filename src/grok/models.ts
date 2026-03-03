@@ -148,7 +148,7 @@ export const MODEL_CONFIG: Record<string, ModelInfo> = {
   "grok-imagine": {
     grok_model: ["grok-3", "MODEL_MODE_FAST"],
     rate_limit_model: "grok-3",
-    display_name: "Grok Imagine (WebSocket)",
+    display_name: "Grok Imagine (NSFW)",
     description: "Image generation via imagine websocket (enable_nsfw=true)",
     raw_model_path: "xai/grok-imagine",
     default_temperature: 1.0,

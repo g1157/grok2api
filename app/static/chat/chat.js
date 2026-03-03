@@ -1724,7 +1724,7 @@ function appendWaterfallImage(item, connectionIndex) {
   waterfall.prepend(card);
   const imageEl = card.querySelector('img');
   bindRetryableImage(imageEl);
-  imageEl?.addEventListener('click', () => setWorkflowSelection(src, 'ws-waterfall', true));
+  imageEl?.addEventListener('click', () => openImaginePreview(src));
   attachWorkflowActions(card, src, 'ws-waterfall');
   if (!workflowState.selectedImage) {
     setWorkflowSelection(src, 'ws-waterfall', false);
@@ -2049,10 +2049,10 @@ async function refreshModels() {
     if (currentTab === 'image') {
       if (previousValue && filteredIds.includes(previousValue)) {
         sel.value = previousValue;
-      } else if (filteredIds.includes('grok-imagine-1.0')) {
-        sel.value = 'grok-imagine-1.0';
       } else if (filteredIds.includes('grok-imagine')) {
         sel.value = 'grok-imagine';
+      } else if (filteredIds.includes('grok-imagine-1.0')) {
+        sel.value = 'grok-imagine-1.0';
       } else {
         sel.value = filteredIds[0] || '';
       }
@@ -2347,7 +2347,7 @@ function updateImageCardCompleted(card, src, failed) {
   img.alt = 'image';
   img.src = src;
   bindRetryableImage(img);
-  img.addEventListener('click', () => setWorkflowSelection(src, 'image-result', true));
+  img.addEventListener('click', () => openImaginePreview(src));
   card.insertBefore(img, card.firstChild);
   attachWorkflowActions(card, src, 'image-result');
   if (!workflowState.selectedImage) {
@@ -2594,7 +2594,7 @@ async function generateImageEdit() {
         <div class="result-meta"><span>#${idx + 1}</span><span>编辑结果</span></div>
       `;
       bindRetryableImage(card.querySelector('img'));
-      card.querySelector('img')?.addEventListener('click', () => setWorkflowSelection(src, 'edit-result', true));
+      card.querySelector('img')?.addEventListener('click', () => openImaginePreview(src));
       attachWorkflowActions(card, src, 'edit-result');
       q('edit-results')?.appendChild(card);
     });

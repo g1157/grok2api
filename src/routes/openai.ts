@@ -583,7 +583,7 @@ function normalizeWorkflowImageInput(raw: string, origin: string): string {
           }
           if (decodedUrl.origin === origin) return decodedUrl.toString();
           if (isAllowedUpstreamAssetHost(decodedUrl.hostname)) {
-            return toProxyUrl(origin, encodeAssetPath(decodedUrl.toString()));
+            return decodedUrl.toString();
           }
         } catch {
           // ignore stale proxy decode failures

@@ -174,6 +174,7 @@ export function createOpenAiStreamFromGrokNdjson(
       let thinkingFinished = false;
       let videoProgressStarted = false;
       let lastVideoProgress = -1;
+      let videoEmitted = false;
 
       let buffer = "";
 
@@ -282,7 +283,7 @@ export function createOpenAiStreamFromGrokNdjson(
                 }
               }
 
-              if (videoUrl) {
+              if (videoUrl && !videoEmitted) {
                 const videoPath = encodeAssetPath(videoUrl);
                 const src = toImgProxyUrl(global, origin, videoPath);
 
@@ -306,6 +307,7 @@ export function createOpenAiStreamFromGrokNdjson(
                     ),
                   ),
                 );
+                videoEmitted = true;
               }
               continue;
             }

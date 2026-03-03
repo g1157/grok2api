@@ -61,6 +61,10 @@ function adminError(message: string, code: string): Record<string, unknown> {
   return { success: false, error: { message, code } };
 }
 
+function jsonError(message: string, code: string): Record<string, unknown> {
+  return adminError(message, code);
+}
+
 function parseBearer(auth: string | null): string | null {
   if (!auth) return null;
   const m = auth.match(/^Bearer\s+(.+)$/i);

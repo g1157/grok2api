@@ -12,7 +12,9 @@ function isPrivateIp(hostname: string): boolean {
   // IPv4 private ranges
   const ipv4 = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (ipv4) {
-    const [, a, b, c] = ipv4.map(Number);
+    const a = Number(ipv4[1] ?? Number.NaN);
+    const b = Number(ipv4[2] ?? Number.NaN);
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
     if (a === 10) return true;
     if (a === 127) return true;
     if (a === 169 && b === 254) return true;

@@ -134,9 +134,7 @@ app.get("/manage", (c) => {
 
 app.get("/admin", (c) => {
   const buildSha = getBuildSha(c.env as Env);
-  const v = c.req.query("v") ?? "";
-  if (v !== buildSha) return c.redirect(`/admin?v=${encodeURIComponent(buildSha)}`, 302);
-  return fetchAsset(c, "/admin.html");
+  return c.redirect(`/admin/token?v=${encodeURIComponent(buildSha)}`, 302);
 });
 
 app.get("/admin/token", (c) => {

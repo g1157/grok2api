@@ -2017,11 +2017,11 @@ async function refreshModels() {
     const data = await res.json();
     models = Array.isArray(data?.data) ? data.data : [];
 
-    const imagineTabModelIds = new Set(['grok-imagine', 'grok-imagine-1.0']);
+    const imageModelIds = new Set(['grok-imagine', 'grok-imagine-1.0']);
     const filtered = models.filter((m) => {
       const id = String(m.id || '');
-      if (currentTab === 'imagine') return imagineTabModelIds.has(id);
-      if (currentTab === 'image') return id === 'grok-imagine-1.0';
+      if (currentTab === 'imagine') return imageModelIds.has(id);
+      if (currentTab === 'image') return imageModelIds.has(id);
       if (currentTab === 'edit') return id === 'grok-imagine-1.0-edit';
       if (currentTab === 'video') return id === 'grok-imagine-1.0-video';
       return !/imagine/i.test(id) || id === 'grok-4-heavy';
@@ -2047,7 +2047,15 @@ async function refreshModels() {
       return;
     }
     if (currentTab === 'image') {
-      sel.value = filteredIds.includes('grok-imagine-1.0') ? 'grok-imagine-1.0' : (filteredIds[0] || '');
+      if (previousValue && filteredIds.includes(previousValue)) {
+        sel.value = previousValue;
+      } else if (filteredIds.includes('grok-imagine-1.0')) {
+        sel.value = 'grok-imagine-1.0';
+      } else if (filteredIds.includes('grok-imagine')) {
+        sel.value = 'grok-imagine';
+      } else {
+        sel.value = filteredIds[0] || '';
+      }
       return;
     }
     if (currentTab === 'edit') {
@@ -2110,12 +2118,13 @@ function switchTab(tab) {
     stopImageContinuous();
   }
   currentTab = tab;
-  ['chat', 'imagine', 'image', 'edit', 'video'].forEach((t) => {
-    q(`tab-${t}`).classList.toggle('active', t === tab);
-    q(`panel-${t}`).classList.toggle('hidden', t !== tab);
+  ['chat', 'image', 'edit', 'video'].forEach((t) => {
+    const tabEl = q(`tab-${t}`);
+    const panelEl = q(`panel-${t}`);
+    if (tabEl) tabEl.classList.toggle('active', t === tab);
+    if (panelEl) panelEl.classList.toggle('hidden', t !== tab);
   });
   updateWorkflowBoardVisibility(tab);
-  if (tab === 'imagine') refreshImagineTabData(true);
   refreshModels();
   if (tab === 'image') refreshImageGenerationMethod();
   renderWorkflowState();
